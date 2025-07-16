@@ -5,12 +5,39 @@ import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Check FFmpeg installation and get path
+let ffmpegPath = 'ffmpeg'; // Default system path
+
+try {
+  // Try to find FFmpeg in system PATH
+  const result = execSync('which ffmpeg || where ffmpeg', { encoding: 'utf8' });
+  if (result.trim()) {
+    ffmpegPath = result.trim().split('\n')[0]; // Use first result
+    console.log(`✅ FFmpeg found at: ${ffmpegPath}`);
+  }
+} catch (error) {
+  console.log('⚠️  FFmpeg not found in system PATH. Please install FFmpeg or set FFMPEG_PATH environment variable.');
+  console.log('   macOS: brew install ffmpeg');
+  console.log('   Windows: Download from https://ffmpeg.org/download.html');
+  console.log('   Linux: sudo apt install ffmpeg');
+}
+
+// Allow custom FFmpeg path via environment variable
+if (process.env.FFMPEG_PATH) {
+  ffmpegPath = process.env.FFMPEG_PATH;
+  console.log(`🔧 Using custom FFmpeg path: ${ffmpegPath}`);
+}
+
+// Set FFmpeg path for fluent-ffmpeg
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 // Middleware
 app.use(cors());
@@ -162,8 +189,23 @@ app.post('/api/caption', upload.fields([
     const scriptContent = fs.readFileSync(scriptPath, 'utf8');
     const subtitles = parseScript(scriptContent, options);
     
-    // Calculate total duration
-    const totalDuration = subtitles.length > 0 ? subtitles[subtitles.length - 1].end : 0;
+    if (subtitles.length === 0) {
+      return res.status(400).json({ error: 'No valid subtitles found in script' });
+    }
+    
+    // Get video duration first
+    const videoInfo = await new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(videoPath, (err, metadata) => {
+        if (err) reject(err);
+        else resolve(metadata);
+      });
+    });
+    
+    const videoDuration = videoInfo.format.duration;
+    const subtitlesDuration = subtitles[subtitles.length - 1].end;
+    const totalDuration = Math.max(videoDuration, subtitlesDuration);
+    
+    console.log(`Video duration: ${videoDuration}s, Subtitles duration: ${subtitlesDuration}s, Total: ${totalDuration}s`);
     
     // Generate SRT file
     const srtContent = generateSRT(subtitles);
@@ -181,6 +223,7 @@ app.post('/api/caption', upload.fields([
     // Create preview GIF (first 3 seconds)
     await new Promise((resolve, reject) => {
       ffmpeg(videoPath)
+        .setFfmpegPath(ffmpegPath)
         .complexFilter([
           `[0:v]fps=10,scale=320:-1:flags=lanczos,split[s0][s1]`,
           `[s0]palettegen[p]`,
@@ -195,7 +238,8 @@ app.post('/api/caption', upload.fields([
 
     // Process main video with captions
     await new Promise((resolve, reject) => {
-      let command = ffmpeg(videoPath);
+      let command = ffmpeg(videoPath)
+        .setFfmpegPath(ffmpegPath);
       
       // Add subtitle filter based on position (top, center, bottom)
       let yPosition;
@@ -214,9 +258,24 @@ app.post('/api/caption', upload.fields([
       
       const subtitleFilter = `subtitles=${srtPath}:force_style='FontName=Arial,FontSize=${options.fontSize},PrimaryColour=&H${options.fontColor.replace('#', '')}&,Bold=${options.fontWeight === 'bold' ? '1' : '0'},Alignment=${options.position === 'top' ? '8' : '2'}'`;
       
+      // If subtitles are longer than video, pad with black frames
+      if (subtitlesDuration > videoDuration) {
+        const paddingDuration = subtitlesDuration - videoDuration;
+        command
+          .complexFilter([
+            `[0:v]${subtitleFilter}[subtitled]`,
+            `color=black:size=1920x1080:duration=${paddingDuration}[padding]`,
+            `[subtitled][padding]concat=n=2:v=1:a=0[final]`
+          ])
+          .map('[final]')
+          .output(outputPath);
+      } else {
+        command
+          .videoFilters(subtitleFilter)
+          .output(outputPath);
+      }
+      
       command
-        .videoFilters(subtitleFilter)
-        .output(outputPath)
         .on('progress', (progress) => {
           console.log(`Processing: ${progress.percent}% done`);
         })

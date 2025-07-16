@@ -59,7 +59,7 @@ const DragDropZone: React.FC<DragDropZoneProps> = ({
 
   return (
     <div
-      className={`relative border-2 border-dashed rounded-2xl p-4 sm:p-6 lg:p-8 text-center transition-all duration-500 transform hover:scale-105 ${
+      className={`relative border-2 border-dashed rounded-2xl p-4 sm:p-6 lg:p-8 text-center transition-all duration-500 transform hover:scale-105 h-full flex flex-col justify-center ${
         isDragging
           ? 'border-purple-400 bg-purple-500/20 scale-105 shadow-2xl shadow-purple-500/25'
           : file
@@ -90,7 +90,7 @@ const DragDropZone: React.FC<DragDropZoneProps> = ({
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
       />
       
-      <div className="flex flex-col items-center space-y-3 sm:space-y-4">
+      <div className="flex flex-col items-center space-y-3 sm:space-y-4 flex-1 justify-center">
         <div className={`relative transition-all duration-500 ${
           file ? 'scale-110' : isDragging ? 'scale-125 animate-pulse' : 'hover:scale-110'
         }`}>

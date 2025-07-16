@@ -16,12 +16,14 @@ A modern, full-stack web application for automatically generating and overlaying
 
 ## Prerequisites
 
-Before running the application, ensure you have the following installed:
+Before running the application, you need:
 
 1. **Node.js** (v16 or higher)
-2. **FFmpeg** - Required for video processing
+2. **FFmpeg** - Required for video processing (automatically detected)
 
 ### Installing FFmpeg
+
+The application will automatically detect FFmpeg if it's installed in your system PATH. If you need to install it:
 
 #### macOS
 ```bash
@@ -36,6 +38,12 @@ brew install ffmpeg
 ```bash
 sudo apt update
 sudo apt install ffmpeg
+```
+
+#### Custom FFmpeg Path
+If FFmpeg is installed in a custom location, set the environment variable:
+```bash
+export FFMPEG_PATH="/path/to/your/ffmpeg"
 ```
 
 ## Installation
@@ -93,6 +101,23 @@ npm start
 npm run preview
 ```
 
+## Configuration
+
+### FFmpeg Setup
+The application automatically detects FFmpeg installation. On startup, you'll see:
+- ✅ `FFmpeg found at: /usr/local/bin/ffmpeg` (success)
+- ⚠️  `FFmpeg not found in system PATH` (needs installation)
+
+### Environment Variables
+- `FFMPEG_PATH`: Custom path to FFmpeg executable
+- `PORT`: Backend server port (default: 3001)
+
+Example `.env` file:
+```
+FFMPEG_PATH=/usr/local/bin/ffmpeg
+PORT=3001
+```
+
 ## API Endpoints
 
 ### POST /api/caption
@@ -126,7 +151,7 @@ Health check endpoint.
 
 ## Default Caption Parameters
 
-The application comes with sensible defaults that can be customized:
+The application includes smart defaults and robust processing:
 
 - **Base Duration**: 3 seconds per subtitle
 - **Word Duration**: +0.3 seconds per word
@@ -135,6 +160,8 @@ The application comes with sensible defaults that can be customized:
 - **Font Weight**: Bold
 - **Position**: Bottom of video
 - **Split Mode**: One line per subtitle
+- **Video Extension**: Automatic padding if subtitles exceed video length
+- **Format Support**: All major video formats (MP4, MOV, AVI, MKV, WEBM, etc.)
 
 ## Customization
 
@@ -172,10 +199,20 @@ growloom-captioner/
 
 ### Common Issues
 
-1. **FFmpeg not found**: Ensure FFmpeg is installed and in your PATH
+1. **FFmpeg not found**: 
+   - Install FFmpeg using the commands above
+   - Or set `FFMPEG_PATH` environment variable
+   - Restart the server after installation
+
 2. **Port conflicts**: Change the port in `server/index.js` if 3001 is in use
+
 3. **File upload limits**: Adjust `fileSize` limit in multer configuration
+
 4. **CORS issues**: Backend includes CORS headers, ensure both servers are running
+
+5. **Video format issues**: 
+   - All major formats are supported (case-insensitive)
+   - If subtitles are longer than video, black padding is automatically added
 
 ### Performance Tips
 
@@ -185,12 +222,14 @@ growloom-captioner/
 
 ## Future Enhancements
 
+- Real-time subtitle preview
 - Database integration for storing projects
 - Cloud storage for processed videos
 - Batch processing capabilities
 - Advanced subtitle formatting options
 - Multi-language support
 - Subtitle export formats (SRT, VTT, etc.)
+- Custom FFmpeg filters and effects
 
 ## License
 
