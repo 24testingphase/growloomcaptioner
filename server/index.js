@@ -163,27 +163,16 @@ app.post('/api/caption', upload.fields([
     scriptPath = script[0].path;
     videoPath = video[0].path;
 
-    // Parse options from request body
+    // Parse options from request body with validation
     const options = {
-      baseDuration: parseFloat(req.body.baseDuration) || 3,
-      wordDuration: parseFloat(req.body.wordDuration) || 0.3,
+      baseDuration: Math.max(0.1, Math.min(10, parseFloat(req.body.baseDuration) || 3)),
+      wordDuration: Math.max(0.1, Math.min(2, parseFloat(req.body.wordDuration) || 0.3)),
       splitMode: req.body.splitMode || 'line',
       fontColor: req.body.fontColor || '#EC4899',
       fontWeight: req.body.fontWeight || 'bold',
-      fontSize: parseInt(req.body.fontSize) || 24,
-      position: req.body.position || 'bottom'
+      fontSize: Math.max(12, Math.min(48, parseInt(req.body.fontSize) || 24)),
+      position: ['top', 'center', 'bottom'].includes(req.body.position) ? req.body.position : 'bottom'
     };
-
-    // Validate options
-    if (isNaN(options.baseDuration) || options.baseDuration < 0.1 || options.baseDuration > 10) {
-      return res.status(400).json({ error: 'Invalid base duration' });
-    }
-    if (isNaN(options.wordDuration) || options.wordDuration < 0.1 || options.wordDuration > 2) {
-      return res.status(400).json({ error: 'Invalid word duration' });
-    }
-    if (!['top', 'center', 'bottom'].includes(options.position)) {
-      return res.status(400).json({ error: 'Invalid position' });
-    }
 
     // Read and parse script
     const scriptContent = fs.readFileSync(scriptPath, 'utf8');
@@ -256,11 +245,13 @@ app.post('/api/caption', upload.fields([
           break;
       }
       
-      const subtitleFilter = `subtitles=${srtPath}:force_style='FontName=Arial,FontSize=${options.fontSize},PrimaryColour=&H${options.fontColor.replace('#', '')}&,Bold=${options.fontWeight === 'bold' ? '1' : '0'},Alignment=${options.position === 'top' ? '8' : '2'}'`;
+      const subtitleFilter = `subtitles=${srtPath}:force_style='FontName=Arial,FontSize=${options.fontSize},PrimaryColour=&H${options.fontColor.replace('#', '')}&,Bold=${options.fontWeight === 'bold' ? '1' : '0'},Alignment=${options.position === 'top' ? '8' : options.position === 'center' ? '5' : '2'}'`;
       
       // If subtitles are longer than video, pad with black frames
       if (subtitlesDuration > videoDuration) {
         const paddingDuration = subtitlesDuration - videoDuration;
+        console.log(`Adding ${paddingDuration}s of black padding to video`);
+        
         command
           .complexFilter([
             `[0:v]${subtitleFilter}[subtitled]`,
@@ -303,7 +294,10 @@ app.post('/api/caption', upload.fields([
 
   } catch (error) {
     console.error('Error processing request:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ 
+      error: 'Video processing failed. Please check your files and try again.',
+      details: error.message 
+    });
   } finally {
     // Clean up temporary files
     try {
@@ -324,11 +318,16 @@ app.post('/api/caption', upload.fields([
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    ffmpegPath: ffmpegPath
+  });
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Growloom Captioner server running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/api/health`);
+  console.log(`🚀 Growloom Captioner server running on port ${PORT}`);
+  console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`🎬 Ready to process videos with captions!`);
 });

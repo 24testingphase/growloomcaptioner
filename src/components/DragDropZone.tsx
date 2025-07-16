@@ -79,7 +79,7 @@ const DragDropZone: React.FC<DragDropZoneProps> = ({
           className="absolute top-2 right-2 z-10 p-1.5 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all duration-300 hover:scale-110"
           title="Remove file"
         >
-          <X className="w-4 h-4 text-red-300" />
+          <X className="w-3 h-3 sm:w-4 sm:h-4 text-red-300" />
         </button>
       )}
       
@@ -111,14 +111,14 @@ const DragDropZone: React.FC<DragDropZoneProps> = ({
         </div>
         
         <div className="space-y-1 sm:space-y-2">
-          <h3 className="text-lg sm:text-xl font-bold text-white">{title}</h3>
+          <h3 className="text-base sm:text-lg lg:text-xl font-bold text-white">{title}</h3>
           {file ? (
             <div className="space-y-1 sm:space-y-2">
               <p className="font-semibold text-green-300 truncate max-w-32 sm:max-w-48 text-sm sm:text-base">{file.name}</p>
-              <p className="text-sm text-green-200">{formatFileSize(file.size)}</p>
+              <p className="text-xs sm:text-sm text-green-200">{formatFileSize(file.size)}</p>
               <div className="inline-flex items-center px-2 sm:px-3 py-1 rounded-full bg-green-500/20 border border-green-300/30">
                 <CheckCircle className="w-3 h-3 sm:w-4 sm:h-4 text-green-300 mr-1 sm:mr-2" />
-                <span className="text-sm text-green-300 font-medium">File uploaded</span>
+                <span className="text-xs sm:text-sm text-green-300 font-medium">File uploaded</span>
               </div>
             </div>
           ) : (
@@ -129,7 +129,7 @@ const DragDropZone: React.FC<DragDropZoneProps> = ({
                   ? 'border-purple-300 bg-purple-500/20 text-purple-200' 
                   : 'border-white/30 bg-white/10 text-white/80 hover:border-purple-300 hover:bg-purple-500/20'
               }`}>
-                <span className="text-sm font-medium">
+                <span className="text-xs sm:text-sm font-medium">
                   {isDragging ? 'Drop your file here' : 'Drag & drop or click to browse'}
                 </span>
               </div>
