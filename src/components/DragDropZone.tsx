@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { DivideIcon as LucideIcon, CheckCircle } from 'lucide-react';
+import { DivideIcon as LucideIcon, CheckCircle, X } from 'lucide-react';
 
 interface DragDropZoneProps {
   onFileUpload: (files: FileList) => void;
@@ -8,6 +8,7 @@ interface DragDropZoneProps {
   title: string;
   description: string;
   file: File | null;
+  onFileDeselect?: () => void;
 }
 
 const DragDropZone: React.FC<DragDropZoneProps> = ({
@@ -16,7 +17,8 @@ const DragDropZone: React.FC<DragDropZoneProps> = ({
   icon: Icon,
   title,
   description,
-  file
+  file,
+  onFileDeselect
 }) => {
   const [isDragging, setIsDragging] = useState(false);
 
@@ -68,6 +70,19 @@ const DragDropZone: React.FC<DragDropZoneProps> = ({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {file && onFileDeselect && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onFileDeselect();
+          }}
+          className="absolute top-2 right-2 z-10 p-1.5 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all duration-300 hover:scale-110"
+          title="Remove file"
+        >
+          <X className="w-4 h-4 text-red-300" />
+        </button>
+      )}
+      
       <input
         type="file"
         accept={acceptedTypes}

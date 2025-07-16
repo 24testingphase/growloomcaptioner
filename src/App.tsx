@@ -29,7 +29,7 @@ type Step = 'upload' | 'customize' | 'processing' | 'results';
 
 function App() {
   const [currentStep, setCurrentStep] = useState<Step>('upload');
-  const [scriptFile, setScriptFile] = useState<File | null>(null);
+  const [scriptContent, setScriptContent] = useState<string>('');
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -46,20 +46,32 @@ function App() {
     position: 'bottom'
   });
 
-  const handleFileUpload = useCallback((files: FileList, type: 'script' | 'video') => {
+  const handleFileUpload = useCallback((files: FileList, type: 'video') => {
     const file = files[0];
-    if (type === 'script') {
-      setScriptFile(file);
-    } else {
+    if (type === 'video') {
       setVideoFile(file);
     }
     setError(null);
   }, []);
 
+  const handleScriptChange = useCallback((content: string) => {
+    setScriptContent(content);
+    setError(null);
+  }, []);
+
+  const handleFileDeselect = useCallback((type: 'script' | 'video') => {
+    if (type === 'script') {
+      setScriptContent('');
+    } else {
+      setVideoFile(null);
+    }
+    setError(null);
+  }, []);
   const estimateRuntime = useCallback(() => {
-    if (!scriptFile) return '00:00:00';
+    if (!scriptContent.trim()) return '00:00:00';
     
-    const estimatedLines = Math.ceil(scriptFile.size / 50);
+    const lines = scriptContent.split('\n').filter(line => line.trim());
+    const estimatedLines = lines.length || 1;
     const totalSeconds = estimatedLines * (options.baseDuration + (5 * options.wordDuration));
     
     const hours = Math.floor(totalSeconds / 3600);
@@ -67,10 +79,10 @@ function App() {
     const seconds = Math.floor(totalSeconds % 60);
     
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-  }, [scriptFile, options]);
+  }, [scriptContent, options]);
 
   const handleProcess = async () => {
-    if (!scriptFile || !videoFile) {
+    if (!scriptContent.trim() || !videoFile) {
       setError('Please upload both script and video files');
       return;
     }
@@ -83,7 +95,10 @@ function App() {
 
     try {
       const formData = new FormData();
-      formData.append('script', scriptFile);
+      
+      // Create a blob from script content and append as file
+      const scriptBlob = new Blob([scriptContent], { type: 'text/plain' });
+      formData.append('script', scriptBlob, 'script.txt');
       formData.append('video', videoFile);
       
       Object.entries(options).forEach(([key, value]) => {
@@ -104,7 +119,7 @@ function App() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Processing failed');
+        throw new Error(errorData.error || 'Video processing failed. Please check your files and try again.');
       }
 
       const resultData = await response.json();
@@ -112,7 +127,19 @@ function App() {
       setCurrentStep('results');
       
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      let errorMessage = 'An unexpected error occurred. Please try again.';
+      
+      if (err instanceof Error) {
+        if (err.message.includes('fetch')) {
+          errorMessage = 'Unable to connect to the server. Please ensure the backend is running.';
+        } else if (err.message.includes('network')) {
+          errorMessage = 'Network error. Please check your connection and try again.';
+        } else {
+          errorMessage = err.message;
+        }
+      }
+      
+      setError(errorMessage);
       setProgress(0);
       setCurrentStep('upload');
     } finally {
@@ -121,7 +148,7 @@ function App() {
   };
 
   const handleReset = () => {
-    setScriptFile(null);
+    setScriptContent('');
     setVideoFile(null);
     setResult(null);
     setError(null);
@@ -130,8 +157,8 @@ function App() {
     setCurrentStep('upload');
   };
 
-  const canProceedToCustomize = scriptFile && videoFile;
-  const canProcess = scriptFile && videoFile;
+  const canProceedToCustomize = scriptContent.trim() && videoFile;
+  const canProcess = scriptContent.trim() && videoFile;
 
   const stepIndicators = [
     { key: 'upload', label: 'Upload', icon: Upload },
@@ -155,9 +182,13 @@ function App() {
         {/* Header */}
         <div className="text-center py-8 px-4">
           <div className="flex items-center justify-center mb-6">
-            <div className="p-4 bg-gradient-to-r from-purple-500 to-pink-500 rounded-2xl shadow-2xl">
-              <Sparkles className="w-12 h-12 text-white" />
-            </div>
+            <button 
+              onClick={handleReset}
+              className="group p-4 bg-gradient-to-r from-purple-500 to-pink-500 rounded-2xl shadow-2xl hover:shadow-purple-500/50 transition-all duration-300 hover:scale-110 cursor-pointer"
+              title="Click to refresh and start over"
+            >
+              <Sparkles className="w-12 h-12 text-white group-hover:animate-spin" />
+            </button>
           </div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold bg-gradient-to-r from-white via-purple-200 to-pink-200 bg-clip-text text-transparent mb-4">
             Growloom Captioner
@@ -216,26 +247,59 @@ function App() {
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 mb-6 sm:mb-8">
-                    <DragDropZone
-                      onFileUpload={(files) => handleFileUpload(files, 'script')}
-                      acceptedTypes=".txt"
-                      icon={FileText}
-                      title="Script File"
-                      description="Upload your .txt script file"
-                      file={scriptFile}
-                    />
+                    <div className="relative">
+                      <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-4 sm:p-6 border border-white/20 hover:border-purple-400 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/20">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center">
+                            <div className="p-2 sm:p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl mr-3">
+                              <FileText className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+                            </div>
+                            <div>
+                              <h3 className="text-lg sm:text-xl font-bold text-white">Script Content</h3>
+                              <p className="text-purple-200 text-sm">Write or paste your script here</p>
+                            </div>
+                          </div>
+                          {scriptContent.trim() && (
+                            <button
+                              onClick={() => handleFileDeselect('script')}
+                              className="p-1.5 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all duration-300 hover:scale-110"
+                              title="Clear script"
+                            >
+                              <X className="w-4 h-4 text-red-300" />
+                            </button>
+                          )}
+                        </div>
+                        <textarea
+                          value={scriptContent}
+                          onChange={(e) => handleScriptChange(e.target.value)}
+                          placeholder="Enter your script here... Each line will become a subtitle."
+                          className="w-full h-32 sm:h-40 px-3 sm:px-4 py-2 sm:py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300 resize-none text-sm sm:text-base"
+                        />
+                        <div className="flex justify-between items-center mt-2">
+                          <span className="text-xs text-purple-300">
+                            {scriptContent.split('\n').filter(line => line.trim()).length} lines
+                          </span>
+                          <span className="text-xs text-purple-300">
+                            {scriptContent.length} characters
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                     
-                    <DragDropZone
-                      onFileUpload={(files) => handleFileUpload(files, 'video')}
-                      acceptedTypes=".mp4,.mov,.avi,.mkv,.webm,.flv,.wmv,.m4v,.3gp,.MP4,.MOV,.AVI,.MKV,.WEBM,.FLV,.WMV,.M4V,.3GP"
-                      icon={Video}
-                      title="Video File"
-                      description="Upload your video file (MP4, MOV, AVI, etc.)"
-                      file={videoFile}
-                    />
+                    <div className="relative">
+                      <DragDropZone
+                        onFileUpload={(files) => handleFileUpload(files, 'video')}
+                        acceptedTypes=".mp4,.mov,.avi,.mkv,.webm,.flv,.wmv,.m4v,.3gp,.MP4,.MOV,.AVI,.MKV,.WEBM,.FLV,.WMV,.M4V,.3GP"
+                        icon={Video}
+                        title="Video File"
+                        description="Upload your video file (MP4, MOV, AVI, etc.)"
+                        file={videoFile}
+                        onFileDeselect={() => handleFileDeselect('video')}
+                      />
+                    </div>
                   </div>
 
-                  {scriptFile && (
+                  {scriptContent.trim() && (
                     <div className="mb-6 sm:mb-8 p-4 sm:p-6 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-2xl border border-purple-300/30">
                       <div className="flex items-center text-white">
                         <Clock className="w-6 h-6 mr-3 text-purple-300" />
