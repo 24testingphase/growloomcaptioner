@@ -247,7 +247,7 @@ function App() {
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 mb-6 sm:mb-8">
-                    <div className="relative h-80 sm:h-96">
+                    <div className="relative">
                       <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-4 sm:p-6 border border-white/20 hover:border-purple-400 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/20">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center">
@@ -273,7 +273,7 @@ function App() {
                           value={scriptContent}
                           onChange={(e) => handleScriptChange(e.target.value)}
                           placeholder="Enter your script here... Each line will become a subtitle."
-                          className="w-full h-40 sm:h-48 px-3 sm:px-4 py-2 sm:py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300 resize-none text-sm sm:text-base"
+                          className="w-full h-32 sm:h-40 px-3 sm:px-4 py-2 sm:py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300 resize-none text-sm sm:text-base"
                         />
                         <div className="flex justify-between items-center mt-2">
                           <span className="text-xs text-purple-300">
@@ -286,7 +286,7 @@ function App() {
                       </div>
                     </div>
                     
-                    <div className="relative h-80 sm:h-96">
+                    <div className="relative">
                       <DragDropZone
                         onFileUpload={(files) => handleFileUpload(files, 'video')}
                         acceptedTypes=".mp4,.mov,.avi,.mkv,.webm,.flv,.wmv,.m4v,.3gp,.MP4,.MOV,.AVI,.MKV,.WEBM,.FLV,.WMV,.M4V,.3GP"

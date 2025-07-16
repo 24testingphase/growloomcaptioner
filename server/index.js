@@ -117,20 +117,6 @@ function formatDuration(seconds) {
   return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Helper function to get video duration
-function getVideoDuration(videoPath) {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(videoPath, (err, metadata) => {
-      if (err) {
-        reject(err);
-      } else {
-        const duration = metadata.format.duration;
-        resolve(duration);
-      }
-    });
-  });
-}
-
 // Main captioning endpoint
 app.post('/api/caption', upload.fields([
   { name: 'script', maxCount: 1 },
@@ -176,12 +162,8 @@ app.post('/api/caption', upload.fields([
     const scriptContent = fs.readFileSync(scriptPath, 'utf8');
     const subtitles = parseScript(scriptContent, options);
     
-    // Get video duration
-    const videoDuration = await getVideoDuration(videoPath);
-    
     // Calculate total duration
-    const subtitlesDuration = subtitles.length > 0 ? subtitles[subtitles.length - 1].end : 0;
-    const totalDuration = Math.max(videoDuration, subtitlesDuration);
+    const totalDuration = subtitles.length > 0 ? subtitles[subtitles.length - 1].end : 0;
     
     // Generate SRT file
     const srtContent = generateSRT(subtitles);
@@ -215,16 +197,6 @@ app.post('/api/caption', upload.fields([
     await new Promise((resolve, reject) => {
       let command = ffmpeg(videoPath);
       
-      // If subtitles are longer than video, extend video with black padding
-      if (subtitlesDuration > videoDuration) {
-        const paddingDuration = subtitlesDuration - videoDuration;
-        command = command.complexFilter([
-          `[0:v]scale=iw:ih,setpts=PTS-STARTPTS[v1]`,
-          `color=black:size=iw:ih:duration=${paddingDuration}[black]`,
-          `[v1][black]concat=n=2:v=1:a=0[extended]`
-        ], 'extended');
-      }
-      
       // Add subtitle filter based on position (top, center, bottom)
       let yPosition;
       switch(options.position) {
@@ -243,7 +215,7 @@ app.post('/api/caption', upload.fields([
       const subtitleFilter = `subtitles=${srtPath}:force_style='FontName=Arial,FontSize=${options.fontSize},PrimaryColour=&H${options.fontColor.replace('#', '')}&,Bold=${options.fontWeight === 'bold' ? '1' : '0'},Alignment=${options.position === 'top' ? '8' : '2'}'`;
       
       command
-        .videoFilters([subtitleFilter])
+        .videoFilters(subtitleFilter)
         .output(outputPath)
         .on('progress', (progress) => {
           console.log(`Processing: ${progress.percent}% done`);
@@ -263,7 +235,7 @@ app.post('/api/caption', upload.fields([
     res.json({
       success: true,
       duration: formatDuration(totalDuration),
-      durationSeconds: Math.round(totalDuration),
+      durationSeconds: totalDuration,
       subtitlesCount: subtitles.length,
       previewUrl: `/uploads/${previewFilename}`,
       downloadUrl: `/uploads/${outputFilename}`,

@@ -59,7 +59,7 @@ const DragDropZone: React.FC<DragDropZoneProps> = ({
 
   return (
     <div
-      className={`relative border-2 border-dashed rounded-2xl p-4 sm:p-6 lg:p-8 text-center transition-all duration-500 transform hover:scale-105 h-full flex flex-col justify-center ${
+      className={`relative border-2 border-dashed rounded-2xl p-4 sm:p-6 lg:p-8 text-center transition-all duration-500 transform hover:scale-105 ${
         isDragging
           ? 'border-purple-400 bg-purple-500/20 scale-105 shadow-2xl shadow-purple-500/25'
           : file
