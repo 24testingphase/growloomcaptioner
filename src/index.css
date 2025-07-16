@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(45deg, #8B5CF6, #EC4899);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(45deg, #7C3AED, #DB2777);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #8B5CF6 rgba(255, 255, 255, 0.1);
+}
+
+/* Custom scrollbar class for specific elements */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(45deg, #8B5CF6, #EC4899);
+  border-radius: 6px;
+}
+
+@layer utilities {
+  .animation-delay-2000 {
+    animation-delay: 2s;
+  }
+  .animation-delay-4000 {
+    animation-delay: 4s;
+  }
+  
+  /* Responsive text utilities */
+  .text-responsive-sm {
+    @apply text-sm sm:text-base;
+  }
+  
+  .text-responsive-lg {
+    @apply text-lg sm:text-xl lg:text-2xl;
+  }
+  
+  .text-responsive-xl {
+    @apply text-xl sm:text-2xl lg:text-3xl;
+  }
+}
+
+/* Custom slider styling */
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: linear-gradient(45deg, #8B5CF6, #EC4899);
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+}
+
+@media (min-width: 640px) {
+  .slider::-webkit-slider-thumb {
+    height: 20px;
+    width: 20px;
+  }
+}
+
+.slider::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: linear-gradient(45deg, #8B5CF6, #EC4899);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+}
+
+@media (min-width: 640px) {
+  .slider::-moz-range-thumb {
+    height: 20px;
+    width: 20px;
+  }
+}
+
+/* Smooth transitions for all elements */
+* {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 300ms;
+}
+
+/* Ensure proper mobile viewport handling */
+@media (max-width: 640px) {
+  body {
+    overflow-x: hidden;
+  }
+  
+  /* Prevent horizontal scroll on mobile */
+  .container {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+}
+
+/* Loading animation for images */
+@keyframes shimmer {
+  0% {
+    background-position: -200px 0;
+  }
+  100% {
+    background-position: calc(200px + 100%) 0;
+  }
+}
+
+.loading-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  background-size: 200px 100%;
+  animation: shimmer 1.5s infinite;
+}
