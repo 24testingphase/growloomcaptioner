@@ -14,11 +14,13 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Check FFmpeg installation and get path
+// ===== LOCAL FFMPEG DETECTION =====
+// This application ONLY uses your local FFmpeg installation
+// No browser-based or cloud FFmpeg packages are used
 let ffmpegPath = 'ffmpeg'; // Default system path
 
 try {
-  // Try to find FFmpeg in system PATH
+  // Step 1: Try to find FFmpeg in system PATH
   const result = execSync('which ffmpeg || where ffmpeg', { encoding: 'utf8' });
   if (result.trim()) {
     ffmpegPath = result.trim().split('\n')[0]; // Use first result
@@ -31,10 +33,19 @@ try {
   console.log('   Linux: sudo apt install ffmpeg');
 }
 
-// Allow custom FFmpeg path via environment variable
+// Step 2: Allow custom FFmpeg path via environment variable
 if (process.env.FFMPEG_PATH) {
   ffmpegPath = process.env.FFMPEG_PATH;
   console.log(`🔧 Using custom FFmpeg path: ${ffmpegPath}`);
+}
+
+// Verify FFmpeg is accessible
+try {
+  execSync(`"${ffmpegPath}" -version`, { encoding: 'utf8', stdio: 'pipe' });
+  console.log(`🎬 FFmpeg is ready for video processing`);
+} catch (error) {
+  console.error(`❌ FFmpeg not accessible at: ${ffmpegPath}`);
+  console.error('Please check your FFmpeg installation or set FFMPEG_PATH environment variable');
 }
 
 // Middleware
@@ -42,14 +53,19 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Ensure uploads, srt, temp, and processed directories exist
+// ===== ORGANIZED DIRECTORY STRUCTURE =====
+// Create separate directories for better file organization
 const uploadsDir = path.join(__dirname, 'uploads');
-const srtDir = path.join(__dirname, 'srt');
+const srtDir = path.join(__dirname, 'subtitles');
 const tempDir = path.join(__dirname, 'temp');
 const processedDir = path.join(__dirname, 'processed');
 [uploadsDir, srtDir, tempDir, processedDir].forEach(dir => {
+console.log('📁 Creating directory structure:');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
+    console.log(`   Created: ${path.basename(dir)}/`);
+  } else {
+    console.log(`   Exists: ${path.basename(dir)}/`);
   }
 });
 
@@ -288,7 +304,7 @@ app.post('/api/caption', upload.fields([
     
     // Generate SRT file in srtDir
     const srtContent = generateSRT(subtitles);
-    srtPath = path.join(srtDir, `subtitles-${Date.now()}.srt`);
+    srtPath = path.join(srtDir, `script-${Date.now()}.srt`);
     fs.writeFileSync(srtPath, srtContent);
 
     updateProgress(30, 'Preparing output paths...');
@@ -432,13 +448,15 @@ app.get('/api/health', (req, res) => {
 });
 
 // Serve new static folders
-app.use('/srt', express.static(srtDir));
+app.use('/subtitles', express.static(srtDir));
 app.use('/temp', express.static(tempDir));
 app.use('/processed', express.static(processedDir));
 
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 Growloom Captioner server running on port ${PORT}`);
+  console.log(`🔧 Using FFmpeg at: ${ffmpegPath}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`📁 File structure: uploads/ | subtitles/ | temp/ | processed/`);
   console.log(`🎬 Ready to process videos with captions!`);
 });

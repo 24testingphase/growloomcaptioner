@@ -2,6 +2,10 @@
 
 A modern, full-stack web application for automatically generating and overlaying captions on videos using custom scripts. Built with React, Node.js, Express, and FFmpeg.
 
+## 🎯 Local FFmpeg Processing Only
+
+**Important**: This application uses ONLY your local FFmpeg installation via direct system calls. No browser-based FFmpeg, cloud processing, or external dependencies are used. Your videos are processed entirely on your machine for maximum privacy and control.
+
 ## Features
 
 - **Drag & Drop Interface**: Upload script (.txt) and video files (.mp4/.mov) with ease
@@ -21,9 +25,11 @@ A modern, full-stack web application for automatically generating and overlaying
 Before running the application, you need:
 
 1. **Node.js** (v16 or higher)
-2. **FFmpeg** - Required for video processing (automatically detected)
+2. **FFmpeg** - Required for local video processing
 
-### Installing FFmpeg
+## FFmpeg Installation & Configuration
+
+### Step 1: Install FFmpeg
 
 The application will automatically detect FFmpeg if it's installed in your system PATH. If you need to install it:
 
@@ -33,8 +39,10 @@ brew install ffmpeg
 ```
 
 #### Windows
-1. Download FFmpeg from https://ffmpeg.org/download.html
-2. Extract and add to your PATH environment variable
+1. Download FFmpeg from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html)
+2. Extract to a folder (e.g., `C:\ffmpeg\`)
+3. Add `C:\ffmpeg\bin\` to your PATH environment variable
+4. Restart your command prompt/terminal
 
 #### Linux (Ubuntu/Debian)
 ```bash
@@ -42,11 +50,56 @@ sudo apt update
 sudo apt install ffmpeg
 ```
 
-#### Custom FFmpeg Path
-If FFmpeg is installed in a custom location, set the environment variable:
+### Step 2: Verify Installation
+
+Test FFmpeg is working:
 ```bash
+ffmpeg -version
+```
+
+You should see FFmpeg version information. If not, FFmpeg is not in your PATH.
+
+### Step 3: Custom FFmpeg Path (Optional)
+
+If FFmpeg is installed in a custom location or not in your PATH, you can specify the exact path:
+
+#### Method 1: Environment Variable (Recommended)
+Create a `.env` file in the `server/` directory:
+```env
+FFMPEG_PATH=C:\path\to\your\ffmpeg.exe
+# or on macOS/Linux:
+# FFMPEG_PATH=/usr/local/bin/ffmpeg
+```
+
+#### Method 2: System Environment Variable
+```bash
+# Windows (Command Prompt)
+set FFMPEG_PATH=C:\path\to\your\ffmpeg.exe
+
+# Windows (PowerShell)
+$env:FFMPEG_PATH="C:\path\to\your\ffmpeg.exe"
+
+# macOS/Linux
 export FFMPEG_PATH="/path/to/your/ffmpeg"
 ```
+
+#### Method 3: Temporary (for testing)
+You can also set it when starting the server:
+```bash
+FFMPEG_PATH="/custom/path/ffmpeg" npm run dev
+```
+
+### FFmpeg Detection Process
+
+The application detects FFmpeg in this order:
+1. **Custom Path**: Checks `FFMPEG_PATH` environment variable
+2. **System PATH**: Searches for `ffmpeg` in your system PATH
+3. **Error**: Shows installation instructions if not found
+
+On startup, you'll see one of these messages:
+- ✅ `FFmpeg found at: /usr/local/bin/ffmpeg` (auto-detected)
+- 🔧 `Using custom FFmpeg path: /custom/path/ffmpeg` (custom path)
+- ❌ `FFmpeg not accessible` (needs installation/configuration)
 
 ## Installation
 
@@ -67,6 +120,8 @@ cd server
 npm install
 cd ..
 ```
+
+**Note**: The server dependencies are minimal and include only essential packages. No heavy video processing libraries are included since we use your local FFmpeg directly.
 
 ## Running the Application
 
@@ -103,20 +158,28 @@ npm start
 npm run preview
 ```
 
-## Configuration
+## Directory Structure
 
-### FFmpeg Setup
-The application automatically detects FFmpeg installation. On startup, you'll see:
-- ✅ `FFmpeg found at: /usr/local/bin/ffmpeg` (success)
-- ⚠️  `FFmpeg not found in system PATH` (needs installation)
+The application creates an organized file structure in the `server/` directory:
 
-### Environment Variables
-- `FFMPEG_PATH`: Custom path to FFmpeg executable
-- `PORT`: Backend server port (default: 3001)
-
-Example `.env` file:
 ```
-FFMPEG_PATH=/usr/local/bin/ffmpeg
+server/
+├── uploads/          # Temporary uploaded files (auto-cleaned)
+├── subtitles/        # Generated SRT subtitle files
+├── temp/             # Preview GIFs and temporary processing files
+├── processed/        # Final captioned videos ready for download
+└── index.js          # Main server file
+```
+
+### Environment Configuration
+
+Create a `.env` file in the `server/` directory for custom configuration:
+
+```
+# Custom FFmpeg path (if not in system PATH)
+FFMPEG_PATH=C:\ffmpeg\bin\ffmpeg.exe
+
+# Server port (default: 3001)
 PORT=3001
 ```
 
@@ -202,19 +265,40 @@ growloom-captioner/
 ### Common Issues
 
 1. **FFmpeg not found**: 
-   - Install FFmpeg using the commands above
-   - Or set `FFMPEG_PATH` environment variable
+   - Verify installation: `ffmpeg -version`
+   - Check PATH environment variable
+   - Set `FFMPEG_PATH` in `.env` file for custom locations
    - Restart the server after installation
 
-2. **Port conflicts**: Change the port in `server/index.js` if 3001 is in use
+2. **FFmpeg permission errors**:
+   - Ensure FFmpeg executable has proper permissions
+   - On Windows, run as administrator if needed
+   - Check antivirus software isn't blocking FFmpeg
 
-3. **File upload limits**: Adjust `fileSize` limit in multer configuration
+3. **Port conflicts**: 
+   - Change `PORT=3002` in `.env` file
+   - Or modify the port in `server/index.js`
 
-4. **CORS issues**: Backend includes CORS headers, ensure both servers are running
+4. **File processing errors**:
+   - Check video file format is supported
+   - Ensure sufficient disk space in server directory
+   - Verify FFmpeg can access input files (no special characters in paths)
 
-5. **Video format issues**: 
-   - All major formats are supported (case-insensitive)
-   - If subtitles are longer than video, black padding is automatically added
+5. **Upload limits**: 
+   - Current limit: 500MB per file
+   - Adjust in `server/index.js` multer configuration if needed
+
+6. **Windows path issues**:
+   - Use forward slashes in `FFMPEG_PATH`: `C:/ffmpeg/bin/ffmpeg.exe`
+   - Or escape backslashes: `C:\\ffmpeg\\bin\\ffmpeg.exe`
+
+### Debug Mode
+
+For detailed FFmpeg output, check the server console logs. The application shows:
+- FFmpeg detection status
+- Directory creation status  
+- Full FFmpeg commands being executed
+- Processing progress and errors
 
 ### Performance Tips
 
