@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,16 +51,16 @@ try {
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ===== ORGANIZED DIRECTORY STRUCTURE =====
 // Create separate directories for better file organization
 const uploadsDir = path.join(__dirname, 'uploads');
-const srtDir = path.join(__dirname, 'subtitles');
+const subtitlesDir = path.join(__dirname, 'subtitles');
 const tempDir = path.join(__dirname, 'temp');
 const processedDir = path.join(__dirname, 'processed');
-[uploadsDir, srtDir, tempDir, processedDir].forEach(dir => {
+
 console.log('📁 Creating directory structure:');
+[uploadsDir, subtitlesDir, tempDir, processedDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
     console.log(`   Created: ${path.basename(dir)}/`);
@@ -216,6 +216,18 @@ function safeDeleteFile(filePath, maxRetries = 3, delay = 1000) {
   });
 }
 
+// Helper function to parse FFmpeg progress output
+function parseFFmpegProgress(line) {
+  const timeMatch = line.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+  if (timeMatch) {
+    const hours = parseInt(timeMatch[1], 10);
+    const minutes = parseInt(timeMatch[2], 10);
+    const seconds = parseFloat(timeMatch[3]);
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+  return null;
+}
+
 // Progress tracking endpoint
 app.get('/api/progress/:jobId', (req, res) => {
   const jobId = req.params.jobId;
@@ -282,9 +294,16 @@ app.post('/api/caption', upload.fields([
     
     // Get video duration first
     const videoInfo = await new Promise((resolve, reject) => {
-      const ffprobeCmd = `"${ffmpegPath}" -i "${videoPath}" -hide_banner 2>&1`;
-      exec(ffprobeCmd, (err, stdout, stderr) => {
-        const match = stdout.match(/Duration: (\d+):(\d+):(\d+\.?\d*)/);
+      const ffprobeArgs = ['-i', videoPath, '-hide_banner'];
+      const ffprobe = spawn(ffmpegPath, ffprobeArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+      
+      let output = '';
+      ffprobe.stderr.on('data', (data) => {
+        output += data.toString();
+      });
+      
+      ffprobe.on('close', (code) => {
+        const match = output.match(/Duration: (\d+):(\d+):(\d+\.?\d*)/);
         if (!match) return reject(new Error('Could not parse video duration'));
         const hours = parseInt(match[1], 10);
         const minutes = parseInt(match[2], 10);
@@ -292,6 +311,8 @@ app.post('/api/caption', upload.fields([
         const duration = hours * 3600 + minutes * 60 + seconds;
         resolve({ format: { duration } });
       });
+      
+      ffprobe.on('error', reject);
     });
 
     const videoDuration = videoInfo.format.duration;
@@ -302,9 +323,9 @@ app.post('/api/caption', upload.fields([
     
     updateProgress(25, 'Generating subtitle file...');
     
-    // Generate SRT file in srtDir
+    // Generate SRT file in subtitlesDir
     const srtContent = generateSRT(subtitles);
-    srtPath = path.join(srtDir, `script-${Date.now()}.srt`);
+    srtPath = path.join(subtitlesDir, `script-${Date.now()}.srt`);
     fs.writeFileSync(srtPath, srtContent);
 
     updateProgress(30, 'Preparing output paths...');
@@ -328,14 +349,32 @@ app.post('/api/caption', upload.fields([
     // Create preview GIF (first 3 seconds)
     await new Promise((resolve, reject) => {
       const palettePath = path.join(tempDir, `palette-${Date.now()}.png`);
-      const gifCmd = `"${ffmpegPath}" -y -t 3 -i "${videoPath}" -vf "fps=10,scale=320:-1:flags=lanczos,palettegen" "${palettePath}" && ` +
-        `"${ffmpegPath}" -y -t 3 -i "${videoPath}" -i "${palettePath}" -filter_complex "fps=10,scale=320:-1:flags=lanczos[x];[x][1:v]paletteuse" "${previewPath}"`;
       
-      exec(gifCmd, async (err, stdout, stderr) => {
-        await safeDeleteFile(palettePath);
-        if (err) return reject(new Error('Failed to create preview GIF: ' + stderr));
-        resolve();
+      // First generate palette
+      const paletteArgs = ['-y', '-t', '3', '-i', videoPath, '-vf', 'fps=10,scale=320:-1:flags=lanczos,palettegen', palettePath];
+      const paletteProcess = spawn(ffmpegPath, paletteArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+      
+      paletteProcess.on('close', (code) => {
+        if (code !== 0) {
+          return reject(new Error('Failed to generate palette for preview'));
+        }
+        
+        // Then create GIF using palette
+        const gifArgs = ['-y', '-t', '3', '-i', videoPath, '-i', palettePath, '-filter_complex', 'fps=10,scale=320:-1:flags=lanczos[x];[x][1:v]paletteuse', previewPath];
+        const gifProcess = spawn(ffmpegPath, gifArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+        
+        gifProcess.on('close', async (code) => {
+          await safeDeleteFile(palettePath);
+          if (code !== 0) {
+            return reject(new Error('Failed to create preview GIF'));
+          }
+          resolve();
+        });
+        
+        gifProcess.on('error', reject);
       });
+      
+      paletteProcess.on('error', reject);
     });
 
     updateProgress(50, 'Processing video with captions...');
@@ -345,45 +384,76 @@ app.post('/api/caption', upload.fields([
     const alignment = getAlignment(options.position);
     const boldValue = options.fontWeight === 'bold' ? '1' : '0';
     
-    // Escape the SRT path for Windows
+    // Escape the SRT path for FFmpeg
     const srtPathEscaped = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
     
     const subtitleStyle = `FontName=Arial,FontSize=${options.fontSize},PrimaryColour=${bgrColor},Bold=${boldValue},Alignment=${alignment}`;
-    const subtitleFilter = `subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'`;
 
-    // Process main video with captions
+    // Process main video with captions using spawn for real-time progress
     await new Promise((resolve, reject) => {
-      let ffmpegCmd;
+      let ffmpegArgs;
       
       if (subtitlesDuration > videoDuration) {
-        // Pad with black frames
+        // Pad with black frames - apply subtitles AFTER concatenation
         const paddingDuration = subtitlesDuration - videoDuration;
         console.log(`Adding ${paddingDuration}s of black padding to video`);
         
-        const filterComplex = `[0:v]scale=1920:1080,${subtitleFilter}[subtitled];color=black:size=1920x1080:duration=${paddingDuration}:rate=30[padding];[subtitled][padding]concat=n=2:v=1:a=0[final]`;
-        ffmpegCmd = `"${ffmpegPath}" -y -i "${videoPath}" -filter_complex "${filterComplex}" -map "[final]" -c:v libx264 -pix_fmt yuv420p -preset medium -crf 23 "${outputPath}"`;
+        const filterComplex = `[0:v]scale=1920:1080[scaled];color=black:size=1920x1080:duration=${paddingDuration}:rate=30[padding];[scaled][padding]concat=n=2:v=1:a=0[concatenated];[concatenated]subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'[final]`;
+        
+        ffmpegArgs = [
+          '-y',
+          '-i', videoPath,
+          '-filter_complex', filterComplex,
+          '-map', '[final]',
+          '-c:v', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-preset', 'medium',
+          '-crf', '23',
+          '-progress', 'pipe:2',
+          outputPath
+        ];
       } else {
-        const videoFilter = `scale=1920:1080,${subtitleFilter}`;
-        ffmpegCmd = `"${ffmpegPath}" -y -i "${videoPath}" -vf "${videoFilter}" -c:v libx264 -pix_fmt yuv420p -preset medium -crf 23 -c:a copy "${outputPath}"`;
+        const videoFilter = `scale=1920:1080,subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'`;
+        
+        ffmpegArgs = [
+          '-y',
+          '-i', videoPath,
+          '-vf', videoFilter,
+          '-c:v', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-preset', 'medium',
+          '-crf', '23',
+          '-c:a', 'copy',
+          '-progress', 'pipe:2',
+          outputPath
+        ];
       }
       
-      console.log('Running FFmpeg command:', ffmpegCmd);
+      console.log('Running FFmpeg with args:', ffmpegArgs.join(' '));
       
-      const startTime = Date.now();
-      const estimatedTime = Math.max(30, totalDuration * 2); // Estimate 2x video duration minimum 30s
+      const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
       
-      const progressInterval = setInterval(() => {
-        const elapsed = (Date.now() - startTime) / 1000;
-        const progressPercent = Math.min(90, 50 + (elapsed / estimatedTime) * 40);
-        updateProgress(Math.round(progressPercent), 'Processing video with captions...');
-      }, 2000);
+      let stderrOutput = '';
       
-      exec(ffmpegCmd, async (err, stdout, stderr) => {
-        clearInterval(progressInterval);
+      ffmpegProcess.stderr.on('data', (data) => {
+        const output = data.toString();
+        stderrOutput += output;
         
-        if (err) {
-          console.error('FFmpeg error:', stderr);
-          return reject(new Error('Failed to process video: ' + stderr));
+        // Parse progress from FFmpeg output
+        const lines = output.split('\n');
+        for (const line of lines) {
+          const currentTime = parseFFmpegProgress(line);
+          if (currentTime !== null) {
+            const progressPercent = Math.min(90, 50 + (currentTime / totalDuration) * 40);
+            updateProgress(Math.round(progressPercent), 'Processing video with captions...');
+          }
+        }
+      });
+      
+      ffmpegProcess.on('close', async (code) => {
+        if (code !== 0) {
+          console.error('FFmpeg error:', stderrOutput);
+          return reject(new Error('Failed to process video: ' + stderrOutput));
         }
         
         updateProgress(95, 'Cleaning up temporary files...');
@@ -396,6 +466,10 @@ app.post('/api/caption', upload.fields([
         ]);
         
         resolve();
+      });
+      
+      ffmpegProcess.on('error', (err) => {
+        reject(new Error('FFmpeg process error: ' + err.message));
       });
     });
 
@@ -414,7 +488,7 @@ app.post('/api/caption', upload.fields([
       durationSeconds: totalDuration,
       subtitlesCount: subtitles.length,
       previewUrl: `/temp/${previewFilename}`,
-      downloadUrl: `/processed/${outputFilename}`,
+      downloadUrl: `/download/${outputFilename}`,
       subtitles: subtitles
     });
 
@@ -447,10 +521,29 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Serve new static folders
-app.use('/subtitles', express.static(srtDir));
+// Force download endpoint for processed videos
+app.get('/download/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const filePath = path.join(processedDir, filename);
+  
+  // Check if file exists
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+  
+  // Force download with proper headers
+  res.download(filePath, filename, (err) => {
+    if (err) {
+      console.error('Download error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Download failed' });
+      }
+    }
+  });
+});
+
+// Serve static files for preview and temp files
 app.use('/temp', express.static(tempDir));
-app.use('/processed', express.static(processedDir));
 
 // Start server
 app.listen(PORT, () => {

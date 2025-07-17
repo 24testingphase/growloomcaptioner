@@ -29,6 +29,18 @@ Before running the application, you need:
 
 ## FFmpeg Installation & Configuration
 
+### GPU vs CPU Processing
+
+**Current Implementation**: The application uses `libx264` (CPU-based) encoding for maximum compatibility across all systems. This ensures reliable processing regardless of your hardware configuration.
+
+**GPU Acceleration (Advanced)**: If you have specific GPU hardware and want to enable GPU encoding, you can modify the FFmpeg arguments in `server/index.js`:
+
+- **NVIDIA GPUs**: Replace `-c:v libx264` with `-c:v h264_nvenc` (requires NVENC support)
+- **Intel GPUs**: Replace `-c:v libx264` with `-c:v h264_qsv` (requires Intel Quick Sync)
+- **AMD GPUs**: Replace `-c:v libx264` with `-c:v h264_amf` (requires AMD AMF support)
+
+**Note**: GPU encoding requires your FFmpeg build to include the specific GPU codec support. The current CPU-based approach provides the best compatibility and reliability.
+
 ### Step 1: Install FFmpeg
 
 The application will automatically detect FFmpeg if it's installed in your system PATH. If you need to install it:
