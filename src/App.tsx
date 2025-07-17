@@ -261,6 +261,20 @@ function App() {
         <div className="flex-1 flex items-start justify-center px-4 pb-8">
           <div className="w-full max-w-6xl">
             
+            // Update status message based on progress
+            let statusMessage = progressData.status || 'Processing...';
+            if (progressData.progress >= 95) {
+              statusMessage = 'Finalizing video...';
+            } else if (progressData.progress >= 55) {
+              statusMessage = 'Processing video with captions...';
+            } else if (progressData.progress >= 35) {
+              statusMessage = 'Creating preview...';
+            } else if (progressData.progress >= 20) {
+              statusMessage = 'Generating subtitles...';
+            } else if (progressData.progress >= 10) {
+              statusMessage = 'Parsing script...';
+            }
+            
             {/* Upload Step */}
             {currentStep === 'upload' && (
               <div className="transform transition-all duration-700 ease-out">

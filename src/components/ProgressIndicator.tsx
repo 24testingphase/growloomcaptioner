@@ -8,10 +8,10 @@ interface ProgressIndicatorProps {
 
 const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({ progress, status }) => {
   const steps = [
-    { label: 'Parsing script', threshold: 20, icon: Clock },
-    { label: 'Generating subtitles', threshold: 40, icon: Zap },
-    { label: 'Processing video', threshold: 70, icon: Loader2 },
-    { label: 'Creating preview', threshold: 90, icon: CheckCircle }
+    { label: 'Parsing script', threshold: 15, icon: Clock },
+    { label: 'Generating subtitles', threshold: 30, icon: Zap },
+    { label: 'Creating preview', threshold: 50, icon: Sparkles },
+    { label: 'Processing video', threshold: 95, icon: Loader2 }
   ];
 
   return (

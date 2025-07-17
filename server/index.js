@@ -267,7 +267,7 @@ app.post('/api/caption', upload.fields([
     scriptPath = script[0].path;
     videoPath = video[0].path;
 
-    updateProgress(10, 'Parsing options...');
+    updateProgress(10, 'Parsing script...');
 
     // Parse options from request body with validation
     const options = {
@@ -280,7 +280,7 @@ app.post('/api/caption', upload.fields([
       position: ['top', 'center', 'bottom'].includes(req.body.position) ? req.body.position : 'bottom'
     };
 
-    updateProgress(15, 'Reading script content...');
+    updateProgress(15, 'Parsing script...');
 
     // Read and parse script
     const scriptContent = fs.readFileSync(scriptPath, 'utf8');
@@ -290,7 +290,7 @@ app.post('/api/caption', upload.fields([
       return res.status(400).json({ error: 'No valid subtitles found in script' });
     }
     
-    updateProgress(20, 'Analyzing video duration...');
+    updateProgress(20, 'Generating subtitles...');
     
     // Get video duration first
     const videoInfo = await new Promise((resolve, reject) => {
@@ -321,14 +321,14 @@ app.post('/api/caption', upload.fields([
     
     console.log(`Video duration: ${videoDuration}s, Subtitles duration: ${subtitlesDuration}s, Total: ${totalDuration}s`);
     
-    updateProgress(25, 'Generating subtitle file...');
+    updateProgress(30, 'Generating subtitles...');
     
     // Generate SRT file in subtitlesDir
     const srtContent = generateSRT(subtitles);
     srtPath = path.join(subtitlesDir, `script-${Date.now()}.srt`);
     fs.writeFileSync(srtPath, srtContent);
 
-    updateProgress(30, 'Preparing output paths...');
+    updateProgress(35, 'Creating preview...');
 
     // Generate output filename in processedDir
     const outputFilename = `captioned-${Date.now()}.mp4`;
@@ -340,7 +340,7 @@ app.post('/api/caption', upload.fields([
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    updateProgress(35, 'Creating video preview...');
+    updateProgress(40, 'Creating preview...');
 
     // Generate preview GIF filename in tempDir
     const previewFilename = `preview-${Date.now()}.gif`;
@@ -377,7 +377,9 @@ app.post('/api/caption', upload.fields([
       paletteProcess.on('error', reject);
     });
 
-    updateProgress(50, 'Processing video with captions...');
+    updateProgress(50, 'Creating preview...');
+    
+    updateProgress(55, 'Processing video with captions...');
 
     // Build subtitle styling
     const bgrColor = hexToBGR(options.fontColor);
@@ -444,7 +446,9 @@ app.post('/api/caption', upload.fields([
         for (const line of lines) {
           const currentTime = parseFFmpegProgress(line);
           if (currentTime !== null) {
-            const progressPercent = Math.min(90, 50 + (currentTime / totalDuration) * 40);
+            // Map FFmpeg progress to 55-95% range (40% of total progress)
+            const ffmpegProgress = Math.min(1, currentTime / totalDuration);
+            const progressPercent = Math.min(95, 55 + (ffmpegProgress * 40));
             updateProgress(Math.round(progressPercent), 'Processing video with captions...');
           }
         }
@@ -456,7 +460,7 @@ app.post('/api/caption', upload.fields([
           return reject(new Error('Failed to process video: ' + stderrOutput));
         }
         
-        updateProgress(95, 'Cleaning up temporary files...');
+        updateProgress(98, 'Cleaning up temporary files...');
         
         // Clean up temp files with safe deletion
         await Promise.all([
