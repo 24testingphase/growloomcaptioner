@@ -5,7 +5,7 @@ A modern, full-stack web application for automatically generating and overlaying
 ## Features
 
 - **Drag & Drop Interface**: Upload script (.txt) and video files (.mp4/.mov) with ease
-- **Real-time Processing**: Live progress indicators and status updates
+- **Real-time Processing**: Live progress tracking with actual processing status updates
 - **Customizable Captions**: Adjust font size, color, position, and timing
 - **Dynamic Duration Calculation**: Base duration + per-word timing (3s + 0.3s/word by default)
 - **Preview Generation**: Automatic GIF preview of captioned content
@@ -13,6 +13,8 @@ A modern, full-stack web application for automatically generating and overlaying
 - **Responsive Design**: Works seamlessly on desktop, tablet, and mobile devices
 - **Multiple Video Formats**: Supports MP4, MOV, AVI, MKV, WEBM, FLV, WMV, M4V, 3GP (case-insensitive)
 - **Multi-Step Interface**: Intuitive workflow with upload, customize, processing, and results steps
+- **Smart Video Extension**: Automatically adds black padding if subtitles are longer than video
+- **Robust File Handling**: Advanced cleanup and error handling for Windows/Mac/Linux compatibility
 
 ## Prerequisites
 

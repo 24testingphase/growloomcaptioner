@@ -22,7 +22,8 @@ const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ result }) => {
   const handleDownload = () => {
     const link = document.createElement('a');
     link.href = `http://localhost:3001${result.downloadUrl}`;
-    link.download = 'captioned-video.mp4';
+    link.download = result.downloadUrl.split('/').pop() || 'captioned-video.mp4';
+    link.target = '_blank';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

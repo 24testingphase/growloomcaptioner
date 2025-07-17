@@ -106,17 +106,15 @@ function App() {
         formData.append(key, value.toString());
       });
 
-      const progressInterval = setInterval(() => {
-        setProgress(prev => Math.min(prev + 8, 90));
-      }, 800);
+      // Start processing request
+      const startTime = Date.now();
+      let jobId = null;
 
       const response = await fetch('http://localhost:3001/api/caption', {
         method: 'POST',
         body: formData
       });
 
-      clearInterval(progressInterval);
-      setProgress(100);
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -124,6 +122,31 @@ function App() {
       }
 
       const resultData = await response.json();
+      jobId = resultData.jobId;
+      
+      // Start polling for progress updates
+      if (jobId) {
+        const progressInterval = setInterval(async () => {
+          try {
+            const progressResponse = await fetch(`http://localhost:3001/api/progress/${jobId}`);
+            if (progressResponse.ok) {
+              const progressData = await progressResponse.json();
+              setProgress(progressData.progress);
+              
+              if (progressData.progress >= 100) {
+                clearInterval(progressInterval);
+              }
+            }
+          } catch (progressError) {
+            console.error('Error fetching progress:', progressError);
+          }
+        }, 1000);
+        
+        // Clear interval after 5 minutes as fallback
+        setTimeout(() => clearInterval(progressInterval), 300000);
+      }
+      
+      setProgress(100);
       setResult(resultData);
       setCurrentStep('results');
       
