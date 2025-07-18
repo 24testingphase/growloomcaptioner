@@ -109,6 +109,7 @@ function App() {
       });
 
       // Start processing request
+      const response = await fetch('http://localhost:3001/api/process', {
         method: 'POST',
         body: formData
       });
@@ -279,7 +280,7 @@ function App() {
         <div className="flex-1 flex items-start justify-center px-4 pb-8">
           <div className="w-full max-w-6xl">
             
-            // Update status message based on progress
+            {/* Update status message based on progress
             let statusMessage = progressData.status || 'Processing...';
             if (progressData.progress >= 95) {
               statusMessage = 'Finalizing video...';
@@ -291,7 +292,7 @@ function App() {
               statusMessage = 'Generating subtitles...';
             } else if (progressData.progress >= 10) {
               statusMessage = 'Parsing script...';
-            }
+            } */}
             
             {/* Upload Step */}
             {currentStep === 'upload' && (
