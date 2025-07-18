@@ -1,5 +1,5 @@
 import React from 'react';
-import { Loader2, Zap, CheckCircle, Clock } from 'lucide-react';
+import { Loader2, Zap, CheckCircle, Clock, Sparkles } from 'lucide-react';
 
 interface ProgressIndicatorProps {
   progress: number;
