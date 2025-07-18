@@ -20,8 +20,13 @@ const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ result }) => {
   const [showAllSubtitles, setShowAllSubtitles] = useState(false);
 
   const handleDownload = () => {
-    // Use the download endpoint which forces download
-    window.location.href = `http://localhost:3001${result.downloadUrl}`;
+    // Create a temporary link element to force download
+    const link = document.createElement('a');
+    link.href = `http://localhost:3001${result.downloadUrl}`;
+    link.download = ''; // This attribute forces download
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handlePreviewLoad = () => {

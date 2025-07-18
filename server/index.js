@@ -99,6 +99,10 @@ const upload = multer({
   }
 });
 
+// Global progress tracking
+global.processingProgress = {};
+global.processingResults = {};
+
 // Helper function to parse script into subtitles
 function parseScript(scriptContent, options = {}) {
   const {
@@ -232,7 +236,35 @@ function parseFFmpegProgress(line) {
 app.get('/api/progress/:jobId', (req, res) => {
   const jobId = req.params.jobId;
   const progress = global.processingProgress?.[jobId] || { progress: 0, status: 'Starting...' };
+  console.log(`Progress request for job ${jobId}:`, progress);
   res.json(progress);
+});
+
+// Results endpoint
+app.get('/api/result/:jobId', (req, res) => {
+  const jobId = req.params.jobId;
+  const result = global.processingResults?.[jobId];
+  
+  if (!result) {
+    return res.status(404).json({ error: 'Result not found' });
+  }
+  
+  res.json(result);
+});
+
+// Test progress endpoint for debugging
+app.post('/api/test-progress/:jobId', (req, res) => {
+  const jobId = req.params.jobId;
+  const { progress, status } = req.body;
+  
+  if (!global.processingProgress) {
+    global.processingProgress = {};
+  }
+  
+  global.processingProgress[jobId] = { progress, status };
+  console.log(`Test progress set for job ${jobId}:`, { progress, status });
+  
+  res.json({ success: true, jobId, progress, status });
 });
 
 // Main captioning endpoint
@@ -241,18 +273,16 @@ app.post('/api/caption', upload.fields([
   { name: 'video', maxCount: 1 }
 ]), async (req, res) => {
   const jobId = Date.now().toString();
-  let scriptPath = null;
-  let videoPath = null;
-  let srtPath = null;
+  console.log(`Starting new job with ID: ${jobId}`);
   
-  // Initialize global progress tracking
+  // Initialize progress tracking immediately
   if (!global.processingProgress) {
     global.processingProgress = {};
   }
   
   const updateProgress = (progress, status) => {
     global.processingProgress[jobId] = { progress, status };
-    console.log(`Progress ${progress}%: ${status}`);
+    console.log(`Job ${jobId} - Progress ${progress}%: ${status}`);
   };
   
   try {
@@ -264,255 +294,297 @@ app.post('/api/caption', upload.fields([
       return res.status(400).json({ error: 'Both script and video files are required' });
     }
 
-    scriptPath = script[0].path;
-    videoPath = video[0].path;
-
-    updateProgress(10, 'Parsing script...');
-
-    // Parse options from request body with validation
-    const options = {
-      baseDuration: Math.max(0.1, Math.min(10, parseFloat(req.body.baseDuration) || 3)),
-      wordDuration: Math.max(0.1, Math.min(2, parseFloat(req.body.wordDuration) || 0.3)),
-      splitMode: req.body.splitMode || 'line',
-      fontColor: req.body.fontColor || '#EC4899',
-      fontWeight: req.body.fontWeight || 'bold',
-      fontSize: Math.max(12, Math.min(48, parseInt(req.body.fontSize) || 24)),
-      position: ['top', 'center', 'bottom'].includes(req.body.position) ? req.body.position : 'bottom'
-    };
-
-    updateProgress(15, 'Parsing script...');
-
-    // Read and parse script
-    const scriptContent = fs.readFileSync(scriptPath, 'utf8');
-    const subtitles = parseScript(scriptContent, options);
-    
-    if (subtitles.length === 0) {
-      return res.status(400).json({ error: 'No valid subtitles found in script' });
-    }
-    
-    updateProgress(20, 'Generating subtitles...');
-    
-    // Get video duration first
-    const videoInfo = await new Promise((resolve, reject) => {
-      const ffprobeArgs = ['-i', videoPath, '-hide_banner'];
-      const ffprobe = spawn(ffmpegPath, ffprobeArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-      
-      let output = '';
-      ffprobe.stderr.on('data', (data) => {
-        output += data.toString();
-      });
-      
-      ffprobe.on('close', (code) => {
-        const match = output.match(/Duration: (\d+):(\d+):(\d+\.?\d*)/);
-        if (!match) return reject(new Error('Could not parse video duration'));
-        const hours = parseInt(match[1], 10);
-        const minutes = parseInt(match[2], 10);
-        const seconds = parseFloat(match[3]);
-        const duration = hours * 3600 + minutes * 60 + seconds;
-        resolve({ format: { duration } });
-      });
-      
-      ffprobe.on('error', reject);
-    });
-
-    const videoDuration = videoInfo.format.duration;
-    const subtitlesDuration = subtitles[subtitles.length - 1].end;
-    const totalDuration = Math.max(videoDuration, subtitlesDuration);
-    
-    console.log(`Video duration: ${videoDuration}s, Subtitles duration: ${subtitlesDuration}s, Total: ${totalDuration}s`);
-    
-    updateProgress(30, 'Generating subtitles...');
-    
-    // Generate SRT file in subtitlesDir
-    const srtContent = generateSRT(subtitles);
-    srtPath = path.join(subtitlesDir, `script-${Date.now()}.srt`);
-    fs.writeFileSync(srtPath, srtContent);
-
-    updateProgress(35, 'Creating preview...');
-
-    // Generate output filename in processedDir
-    const outputFilename = `captioned-${Date.now()}.mp4`;
-    const outputPath = path.join(processedDir, outputFilename);
-    
-    // Ensure output directory exists
-    const outputDir = path.dirname(outputPath);
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-
-    updateProgress(40, 'Creating preview...');
-
-    // Generate preview GIF filename in tempDir
-    const previewFilename = `preview-${Date.now()}.gif`;
-    const previewPath = path.join(tempDir, previewFilename);
-
-    // Create preview GIF (first 3 seconds)
-    await new Promise((resolve, reject) => {
-      const palettePath = path.join(tempDir, `palette-${Date.now()}.png`);
-      
-      // First generate palette
-      const paletteArgs = ['-y', '-t', '3', '-i', videoPath, '-vf', 'fps=10,scale=320:-1:flags=lanczos,palettegen', palettePath];
-      const paletteProcess = spawn(ffmpegPath, paletteArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-      
-      paletteProcess.on('close', (code) => {
-        if (code !== 0) {
-          return reject(new Error('Failed to generate palette for preview'));
-        }
-        
-        // Then create GIF using palette
-        const gifArgs = ['-y', '-t', '3', '-i', videoPath, '-i', palettePath, '-filter_complex', 'fps=10,scale=320:-1:flags=lanczos[x];[x][1:v]paletteuse', previewPath];
-        const gifProcess = spawn(ffmpegPath, gifArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-        
-        gifProcess.on('close', async (code) => {
-          await safeDeleteFile(palettePath);
-          if (code !== 0) {
-            return reject(new Error('Failed to create preview GIF'));
-          }
-          resolve();
-        });
-        
-        gifProcess.on('error', reject);
-      });
-      
-      paletteProcess.on('error', reject);
-    });
-
-    updateProgress(50, 'Creating preview...');
-    
-    updateProgress(55, 'Processing video with captions...');
-
-    // Build subtitle styling
-    const bgrColor = hexToBGR(options.fontColor);
-    const alignment = getAlignment(options.position);
-    const boldValue = options.fontWeight === 'bold' ? '1' : '0';
-    
-    // Escape the SRT path for FFmpeg
-    const srtPathEscaped = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
-    
-    const subtitleStyle = `FontName=Arial,FontSize=${options.fontSize},PrimaryColour=${bgrColor},Bold=${boldValue},Alignment=${alignment}`;
-
-    // Process main video with captions using spawn for real-time progress
-    await new Promise((resolve, reject) => {
-      let ffmpegArgs;
-      
-      if (subtitlesDuration > videoDuration) {
-        // Pad with black frames - apply subtitles AFTER concatenation
-        const paddingDuration = subtitlesDuration - videoDuration;
-        console.log(`Adding ${paddingDuration}s of black padding to video`);
-        
-        const filterComplex = `[0:v]scale=1920:1080[scaled];color=black:size=1920x1080:duration=${paddingDuration}:rate=30[padding];[scaled][padding]concat=n=2:v=1:a=0[concatenated];[concatenated]subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'[final]`;
-        
-        ffmpegArgs = [
-          '-y',
-          '-i', videoPath,
-          '-filter_complex', filterComplex,
-          '-map', '[final]',
-          '-c:v', 'libx264',
-          '-pix_fmt', 'yuv420p',
-          '-preset', 'medium',
-          '-crf', '23',
-          '-progress', 'pipe:2',
-          outputPath
-        ];
-      } else {
-        const videoFilter = `scale=1920:1080,subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'`;
-        
-        ffmpegArgs = [
-          '-y',
-          '-i', videoPath,
-          '-vf', videoFilter,
-          '-c:v', 'libx264',
-          '-pix_fmt', 'yuv420p',
-          '-preset', 'medium',
-          '-crf', '23',
-          '-c:a', 'copy',
-          '-progress', 'pipe:2',
-          outputPath
-        ];
-      }
-      
-      console.log('Running FFmpeg with args:', ffmpegArgs.join(' '));
-      
-      const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-      
-      let stderrOutput = '';
-      
-      ffmpegProcess.stderr.on('data', (data) => {
-        const output = data.toString();
-        stderrOutput += output;
-        
-        // Parse progress from FFmpeg output
-        const lines = output.split('\n');
-        for (const line of lines) {
-          const currentTime = parseFFmpegProgress(line);
-          if (currentTime !== null) {
-            // Map FFmpeg progress to 55-95% range (40% of total progress)
-            const ffmpegProgress = Math.min(1, currentTime / totalDuration);
-            const progressPercent = Math.min(95, 55 + (ffmpegProgress * 40));
-            updateProgress(Math.round(progressPercent), 'Processing video with captions...');
-          }
-        }
-      });
-      
-      ffmpegProcess.on('close', async (code) => {
-        if (code !== 0) {
-          console.error('FFmpeg error:', stderrOutput);
-          return reject(new Error('Failed to process video: ' + stderrOutput));
-        }
-        
-        updateProgress(98, 'Cleaning up temporary files...');
-        
-        // Clean up temp files with safe deletion
-        await Promise.all([
-          safeDeleteFile(scriptPath),
-          safeDeleteFile(videoPath),
-          safeDeleteFile(srtPath)
-        ]);
-        
-        resolve();
-      });
-      
-      ffmpegProcess.on('error', (err) => {
-        reject(new Error('FFmpeg process error: ' + err.message));
-      });
-    });
-
-    updateProgress(100, 'Processing complete!');
-
-    // Clean up progress tracking after a delay
-    setTimeout(() => {
-      delete global.processingProgress[jobId];
-    }, 60000); // Clean up after 1 minute
-
-    // Return response
+    // Send immediate response with job ID
     res.json({
       success: true,
       jobId: jobId,
-      duration: formatDuration(totalDuration),
-      durationSeconds: totalDuration,
-      subtitlesCount: subtitles.length,
-      previewUrl: `/temp/${previewFilename}`,
-      downloadUrl: `/download/${outputFilename}`,
-      subtitles: subtitles
+      message: 'Processing started'
     });
 
+    // Continue processing in background
+    processVideoInBackground(jobId, script[0], video[0], req.body, updateProgress);
+
   } catch (error) {
-    console.error('Error processing request:', error);
-    
-    // Clean up temp files on error
-    await Promise.all([
-      safeDeleteFile(scriptPath),
-      safeDeleteFile(videoPath),
-      safeDeleteFile(srtPath)
-    ]);
+    console.error('Error starting video processing:', error);
     
     // Clean up progress tracking
     delete global.processingProgress[jobId];
     
-    res.status(500).json({ 
-      error: 'Video processing failed. Please check your files and try again.',
-      details: error.message 
-    });
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        error: 'Failed to start video processing',
+        details: error.message 
+      });
+    }
+  }
+
+  // Background processing function
+  async function processVideoInBackground(jobId, scriptFile, videoFile, options, updateProgress) {
+    let scriptPath = scriptFile.path;
+    let videoPath = videoFile.path;
+    let srtPath = null;
+    
+    try {
+      updateProgress(10, 'Parsing script...');
+
+      // Parse options from request body with validation
+      const processOptions = {
+        baseDuration: Math.max(0.1, Math.min(10, parseFloat(options.baseDuration) || 3)),
+        wordDuration: Math.max(0.1, Math.min(2, parseFloat(options.wordDuration) || 0.3)),
+        splitMode: options.splitMode || 'line',
+        fontColor: options.fontColor || '#EC4899',
+        fontWeight: options.fontWeight || 'bold',
+        fontSize: Math.max(12, Math.min(48, parseInt(options.fontSize) || 24)),
+        position: ['top', 'center', 'bottom'].includes(options.position) ? options.position : 'bottom'
+      };
+
+      updateProgress(15, 'Parsing script...');
+
+      // Read and parse script
+      const scriptContent = fs.readFileSync(scriptPath, 'utf8');
+      const subtitles = parseScript(scriptContent, processOptions);
+      
+      if (subtitles.length === 0) {
+        throw new Error('No valid subtitles found in script');
+      }
+      
+      updateProgress(20, 'Analyzing video...');
+      
+      // Get video duration first
+      const videoInfo = await new Promise((resolve, reject) => {
+        const ffprobeArgs = ['-i', videoPath, '-hide_banner'];
+        const ffprobe = spawn(ffmpegPath, ffprobeArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+        
+        let output = '';
+        ffprobe.stderr.on('data', (data) => {
+          output += data.toString();
+        });
+        
+        ffprobe.on('close', (code) => {
+          const match = output.match(/Duration: (\d+):(\d+):(\d+\.?\d*)/);
+          if (!match) return reject(new Error('Could not parse video duration'));
+          const hours = parseInt(match[1], 10);
+          const minutes = parseInt(match[2], 10);
+          const seconds = parseFloat(match[3]);
+          const duration = hours * 3600 + minutes * 60 + seconds;
+          resolve({ format: { duration } });
+        });
+        
+        ffprobe.on('error', reject);
+      });
+
+      const videoDuration = videoInfo.format.duration;
+      const subtitlesDuration = subtitles[subtitles.length - 1].end;
+      const totalDuration = Math.max(videoDuration, subtitlesDuration);
+      
+      console.log(`Video duration: ${videoDuration}s, Subtitles duration: ${subtitlesDuration}s, Total: ${totalDuration}s`);
+      
+      updateProgress(30, 'Generating subtitles...');
+      
+      // Generate SRT file in subtitlesDir
+      const srtContent = generateSRT(subtitles);
+      srtPath = path.join(subtitlesDir, `script-${Date.now()}.srt`);
+      fs.writeFileSync(srtPath, srtContent);
+
+      updateProgress(35, 'Creating preview...');
+
+      // Generate output filename in processedDir
+      const outputFilename = `captioned-${Date.now()}.mp4`;
+      const outputPath = path.join(processedDir, outputFilename);
+      
+      // Ensure output directory exists
+      const outputDir = path.dirname(outputPath);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+
+      updateProgress(40, 'Creating preview...');
+
+      // Generate preview GIF filename in tempDir
+      const previewFilename = `preview-${Date.now()}.gif`;
+      const previewPath = path.join(tempDir, previewFilename);
+
+      // Create preview GIF (first 3 seconds)
+      await new Promise((resolve, reject) => {
+        const palettePath = path.join(tempDir, `palette-${Date.now()}.png`);
+        
+        // First generate palette
+        const paletteArgs = ['-y', '-t', '3', '-i', videoPath, '-vf', 'fps=10,scale=320:-1:flags=lanczos,palettegen', palettePath];
+        const paletteProcess = spawn(ffmpegPath, paletteArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+        
+        paletteProcess.on('close', (code) => {
+          if (code !== 0) {
+            return reject(new Error('Failed to generate palette for preview'));
+          }
+          
+          // Then create GIF using palette
+          const gifArgs = ['-y', '-t', '3', '-i', videoPath, '-i', palettePath, '-filter_complex', 'fps=10,scale=320:-1:flags=lanczos[x];[x][1:v]paletteuse', previewPath];
+          const gifProcess = spawn(ffmpegPath, gifArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+          
+          gifProcess.on('close', async (code) => {
+            await safeDeleteFile(palettePath);
+            if (code !== 0) {
+              return reject(new Error('Failed to create preview GIF'));
+            }
+            resolve();
+          });
+          
+          gifProcess.on('error', reject);
+        });
+        
+        paletteProcess.on('error', reject);
+      });
+
+      updateProgress(50, 'Creating preview...');
+      
+      updateProgress(55, 'Processing video with captions...');
+
+      // Build subtitle styling
+      const bgrColor = hexToBGR(processOptions.fontColor);
+      const alignment = getAlignment(processOptions.position);
+      const boldValue = processOptions.fontWeight === 'bold' ? '1' : '0';
+      
+      // Escape the SRT path for FFmpeg
+      const srtPathEscaped = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+      
+      const subtitleStyle = `FontName=Arial,FontSize=${processOptions.fontSize},PrimaryColour=${bgrColor},Bold=${boldValue},Alignment=${alignment}`;
+
+      // Process main video with captions using spawn for real-time progress
+      await new Promise((resolve, reject) => {
+        let ffmpegArgs;
+        
+        if (subtitlesDuration > videoDuration) {
+          // Pad with black frames - apply subtitles FIRST, then concatenate with padding
+          const paddingDuration = subtitlesDuration - videoDuration;
+          console.log(`Adding ${paddingDuration}s of black padding to video`);
+          
+          // Apply subtitles to original video first, then concatenate with black padding
+          const filterComplex = `[0:v]subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'[withSubtitles];color=black:size=iw:ih:duration=${paddingDuration}:rate=30[padding];[withSubtitles][padding]concat=n=2:v=1:a=0[final]`;
+          
+          ffmpegArgs = [
+            '-y',
+            '-i', videoPath,
+            '-filter_complex', filterComplex,
+            '-map', '[final]',
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'medium',
+            '-crf', '23',
+            '-progress', 'pipe:2',
+            outputPath
+          ];
+        } else {
+          // No padding needed - just add subtitles without scaling
+          const videoFilter = `subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'`;
+          
+          ffmpegArgs = [
+            '-y',
+            '-i', videoPath,
+            '-vf', videoFilter,
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'medium',
+            '-crf', '23',
+            '-c:a', 'copy',
+            '-progress', 'pipe:2',
+            outputPath
+          ];
+        }
+        
+        console.log('Running FFmpeg with args:', ffmpegArgs.join(' '));
+        
+        const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+        
+        let stderrOutput = '';
+        
+        ffmpegProcess.stderr.on('data', (data) => {
+          const output = data.toString();
+          stderrOutput += output;
+          
+          // Parse progress from FFmpeg output
+          const lines = output.split('\n');
+          for (const line of lines) {
+            const currentTime = parseFFmpegProgress(line);
+            if (currentTime !== null) {
+              // Map FFmpeg progress to 55-95% range (40% of total progress)
+              const ffmpegProgress = Math.min(1, currentTime / totalDuration);
+              const progressPercent = Math.min(95, 55 + (ffmpegProgress * 40));
+              updateProgress(Math.round(progressPercent), 'Processing video with captions...');
+            }
+          }
+        });
+        
+        ffmpegProcess.on('close', async (code) => {
+          if (code !== 0) {
+            console.error('FFmpeg error:', stderrOutput);
+            return reject(new Error('Failed to process video: ' + stderrOutput));
+          }
+          
+          updateProgress(98, 'Cleaning up temporary files...');
+          
+          // Clean up temp files with safe deletion
+          await Promise.all([
+            safeDeleteFile(scriptPath),
+            safeDeleteFile(videoPath),
+            safeDeleteFile(srtPath)
+          ]);
+          
+          resolve();
+        });
+        
+        ffmpegProcess.on('error', (err) => {
+          reject(new Error('FFmpeg process error: ' + err.message));
+        });
+      });
+
+      updateProgress(100, 'Processing complete!');
+
+      // Store final results
+      const result = {
+        success: true,
+        jobId: jobId,
+        duration: formatDuration(totalDuration),
+        durationSeconds: totalDuration,
+        subtitlesCount: subtitles.length,
+        previewUrl: `/temp/${previewFilename}`,
+        downloadUrl: `/download/${outputFilename}`,
+        subtitles: subtitles
+      };
+
+      global.processingResults[jobId] = result;
+
+      // Clean up progress tracking after a delay
+      setTimeout(() => {
+        delete global.processingProgress[jobId];
+        delete global.processingResults[jobId];
+      }, 300000); // Clean up after 5 minutes
+
+    } catch (error) {
+      console.error('Error processing video in background:', error);
+      
+      // Clean up temp files on error
+      await Promise.all([
+        safeDeleteFile(scriptPath),
+        safeDeleteFile(videoPath),
+        safeDeleteFile(srtPath)
+      ]);
+      
+      // Store error result
+      global.processingResults[jobId] = {
+        success: false,
+        error: 'Video processing failed. Please check your files and try again.',
+        details: error.message
+      };
+      
+      // Update progress to show error
+      updateProgress(0, 'Processing failed');
+      
+      // Clean up progress tracking
+      setTimeout(() => {
+        delete global.processingProgress[jobId];
+        delete global.processingResults[jobId];
+      }, 60000);
+    }
   }
 });
 

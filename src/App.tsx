@@ -33,6 +33,7 @@ function App() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState('Starting...');
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   
@@ -91,6 +92,7 @@ function App() {
     setCurrentStep('processing');
     setIsProcessing(true);
     setProgress(0);
+    setStatus('Starting...');
     setError(null);
     setResult(null);
 
@@ -107,10 +109,6 @@ function App() {
       });
 
       // Start processing request
-      const startTime = Date.now();
-      let jobId = null;
-
-      const response = await fetch('http://localhost:3001/api/caption', {
         method: 'POST',
         body: formData
       });
@@ -122,33 +120,51 @@ function App() {
       }
 
       const resultData = await response.json();
-      jobId = resultData.jobId;
+      const jobId = resultData.jobId;
+      console.log(`Started processing with job ID: ${jobId}`);
       
-      // Start polling for progress updates
-      if (jobId) {
+      // Add a small delay before starting polling to ensure server has time to initialize
+      setTimeout(() => {
         const progressInterval = setInterval(async () => {
           try {
+            console.log(`Polling progress for job ${jobId}`);
             const progressResponse = await fetch(`http://localhost:3001/api/progress/${jobId}`);
             if (progressResponse.ok) {
               const progressData = await progressResponse.json();
+              console.log(`Progress update:`, progressData);
               setProgress(progressData.progress);
+              setStatus(progressData.status || 'Processing...');
               
               if (progressData.progress >= 100) {
                 clearInterval(progressInterval);
+                
+                // Fetch final results
+                try {
+                  const resultResponse = await fetch(`http://localhost:3001/api/result/${jobId}`);
+                  if (resultResponse.ok) {
+                    const finalResult = await resultResponse.json();
+                    setResult(finalResult);
+                    setCurrentStep('results');
+                  } else {
+                    throw new Error('Failed to fetch final results');
+                  }
+                } catch (resultError) {
+                  console.error('Error fetching results:', resultError);
+                  setError('Processing completed but failed to fetch results');
+                  setCurrentStep('upload');
+                }
               }
+            } else {
+              console.error('Failed to fetch progress:', progressResponse.status);
             }
           } catch (progressError) {
             console.error('Error fetching progress:', progressError);
           }
-        }, 1000);
+        }, 500); // Poll every 500ms for more responsive updates
         
-        // Clear interval after 5 minutes as fallback
+        // Clear interval after 10 minutes as fallback
         setTimeout(() => clearInterval(progressInterval), 300000);
-      }
-      
-      setProgress(100);
-      setResult(resultData);
-      setCurrentStep('results');
+      }, 500); // Wait 500ms before starting polling
       
     } catch (err) {
       let errorMessage = 'An unexpected error occurred. Please try again.';
@@ -165,6 +181,7 @@ function App() {
       
       setError(errorMessage);
       setProgress(0);
+      setStatus('Starting...');
       setCurrentStep('upload');
     } finally {
       setIsProcessing(false);
@@ -177,6 +194,7 @@ function App() {
     setResult(null);
     setError(null);
     setProgress(0);
+    setStatus('Starting...');
     setIsProcessing(false);
     setCurrentStep('upload');
   };
@@ -420,7 +438,7 @@ function App() {
                   
                   <ProgressIndicator 
                     progress={progress}
-                    status="Processing your video with captions..."
+                    status={status}
                   />
                 </div>
               </div>
