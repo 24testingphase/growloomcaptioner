@@ -350,34 +350,62 @@ app.post('/api/caption', upload.fields([
       
       updateProgress(20, 'Analyzing video...');
       
-      // Get video duration first
+      // Get video duration and dimensions
       const videoInfo = await new Promise((resolve, reject) => {
-        const ffprobeArgs = ['-i', videoPath, '-hide_banner'];
+        const ffprobeArgs = [
+          '-v', 'quiet',
+          '-print_format', 'json',
+          '-show_format',
+          '-show_streams',
+          '-i', videoPath
+        ];
         const ffprobe = spawn(ffmpegPath, ffprobeArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
         
         let output = '';
-        ffprobe.stderr.on('data', (data) => {
+        ffprobe.stdout.on('data', (data) => {
           output += data.toString();
         });
         
         ffprobe.on('close', (code) => {
-          const match = output.match(/Duration: (\d+):(\d+):(\d+\.?\d*)/);
-          if (!match) return reject(new Error('Could not parse video duration'));
-          const hours = parseInt(match[1], 10);
-          const minutes = parseInt(match[2], 10);
-          const seconds = parseFloat(match[3]);
-          const duration = hours * 3600 + minutes * 60 + seconds;
-          resolve({ format: { duration } });
+          if (code !== 0) {
+            return reject(new Error('FFprobe failed to analyze video'));
+          }
+          
+          try {
+            const info = JSON.parse(output);
+            const videoStream = info.streams.find(stream => stream.codec_type === 'video');
+            
+            if (!videoStream) {
+              return reject(new Error('No video stream found'));
+            }
+            
+            const duration = parseFloat(info.format.duration);
+            const width = parseInt(videoStream.width);
+            const height = parseInt(videoStream.height);
+            
+            if (!duration || !width || !height) {
+              return reject(new Error('Could not extract video properties'));
+            }
+            
+            resolve({ 
+              format: { duration },
+              streams: [{ width, height }]
+            });
+          } catch (parseError) {
+            reject(new Error('Failed to parse video information: ' + parseError.message));
+          }
         });
         
         ffprobe.on('error', reject);
       });
 
       const videoDuration = videoInfo.format.duration;
+      const videoWidth = videoInfo.streams[0].width;
+      const videoHeight = videoInfo.streams[0].height;
       const subtitlesDuration = subtitles[subtitles.length - 1].end;
       const totalDuration = Math.max(videoDuration, subtitlesDuration);
       
-      console.log(`Video duration: ${videoDuration}s, Subtitles duration: ${subtitlesDuration}s, Total: ${totalDuration}s`);
+      console.log(`Video: ${videoWidth}x${videoHeight}, Duration: ${videoDuration}s, Subtitles: ${subtitlesDuration}s, Total: ${totalDuration}s`);
       
       updateProgress(30, 'Generating subtitles...');
       
@@ -454,12 +482,12 @@ app.post('/api/caption', upload.fields([
         let ffmpegArgs;
         
         if (subtitlesDuration > videoDuration) {
-          // Pad with black frames - apply subtitles FIRST, then concatenate with padding
+          // Add black padding with EXACT original video dimensions - apply subtitles FIRST, then concatenate
           const paddingDuration = subtitlesDuration - videoDuration;
-          console.log(`Adding ${paddingDuration}s of black padding to video`);
+          console.log(`Adding ${paddingDuration}s of black padding (${videoWidth}x${videoHeight}) to video`);
           
-          // Apply subtitles to original video first, then concatenate with black padding
-          const filterComplex = `[0:v]subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'[withSubtitles];color=black:size=iw:ih:duration=${paddingDuration}:rate=30[padding];[withSubtitles][padding]concat=n=2:v=1:a=0[final]`;
+          // Apply subtitles to original video first, then concatenate with black padding using EXACT dimensions
+          const filterComplex = `[0:v]subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'[withSubtitles];color=black:size=${videoWidth}x${videoHeight}:duration=${paddingDuration}:rate=30[padding];[withSubtitles][padding]concat=n=2:v=1:a=0[final]`;
           
           ffmpegArgs = [
             '-y',
@@ -474,7 +502,7 @@ app.post('/api/caption', upload.fields([
             outputPath
           ];
         } else {
-          // No padding needed - just add subtitles without scaling
+          // No padding needed - just add subtitles with NO scaling whatsoever
           const videoFilter = `subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'`;
           
           ffmpegArgs = [
