@@ -109,7 +109,7 @@ function App() {
       });
 
       // Start processing request
-      const response = await fetch('http://localhost:3001/api/process', {
+      const response = await fetch('http://localhost:3001/api/caption', {
         method: 'POST',
         body: formData
       });
