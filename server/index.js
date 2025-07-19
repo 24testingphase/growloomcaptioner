@@ -268,10 +268,7 @@ app.post('/api/test-progress/:jobId', (req, res) => {
 });
 
 // Main captioning endpoint
-app.post('/api/caption', upload.fields([
-  { name: 'script', maxCount: 1 },
-  { name: 'video', maxCount: 1 }
-]), async (req, res) => {
+app.post('/api/caption', upload.any(), async (req, res) => {
   const jobId = Date.now().toString();
   console.log(`Starting new job with ID: ${jobId}`);
   
@@ -288,21 +285,54 @@ app.post('/api/caption', upload.fields([
   try {
     updateProgress(5, 'Validating files...');
     
-    const { script, video } = req.files;
+    const files = req.files;
+    const processingMode = req.body.processingMode || 'single';
     
-    if (!script || !video) {
-      return res.status(400).json({ error: 'Both script and video files are required' });
+    if (processingMode === 'single') {
+      const script = files.find(f => f.fieldname === 'script');
+      const video = files.find(f => f.fieldname === 'video');
+      
+      if (!script || !video) {
+        return res.status(400).json({ error: 'Both script and video files are required' });
+      }
+      
+      // Send immediate response with job ID
+      res.json({
+        success: true,
+        jobId: jobId,
+        message: 'Processing started'
+      });
+      
+      // Continue processing in background
+      processVideoInBackground(jobId, script, video, req.body, updateProgress);
+    } else {
+      // Batch processing
+      const batchCount = parseInt(req.body.batchCount);
+      const scripts = [];
+      const videos = [];
+      
+      for (let i = 0; i < batchCount; i++) {
+        const script = files.find(f => f.fieldname === `script_${i}`);
+        const video = files.find(f => f.fieldname === `video_${i}`);
+        
+        if (!script || !video) {
+          return res.status(400).json({ error: `Missing script or video file for pair ${i + 1}` });
+        }
+        
+        scripts.push(script);
+        videos.push(video);
+      }
+      
+      // Send immediate response with job ID
+      res.json({
+        success: true,
+        jobId: jobId,
+        message: 'Batch processing started'
+      });
+      
+      // Continue batch processing in background
+      processBatchInBackground(jobId, scripts, videos, req.body, updateProgress);
     }
-
-    // Send immediate response with job ID
-    res.json({
-      success: true,
-      jobId: jobId,
-      message: 'Processing started'
-    });
-
-    // Continue processing in background
-    processVideoInBackground(jobId, script[0], video[0], req.body, updateProgress);
 
   } catch (error) {
     console.error('Error starting video processing:', error);
@@ -318,8 +348,75 @@ app.post('/api/caption', upload.fields([
     }
   }
 
-  // Background processing function
-  async function processVideoInBackground(jobId, scriptFile, videoFile, options, updateProgress) {
+  // Batch processing function
+  async function processBatchInBackground(jobId, scripts, videos, options, updateProgress) {
+    const results = [];
+    const totalPairs = scripts.length;
+    
+    try {
+      updateProgress(5, `Starting batch processing of ${totalPairs} video pairs...`);
+      
+      for (let i = 0; i < totalPairs; i++) {
+        const pairProgress = (i / totalPairs) * 90; // Reserve 10% for final steps
+        updateProgress(Math.round(5 + pairProgress), `Processing pair ${i + 1}/${totalPairs}...`);
+        
+        try {
+          // Process each pair individually
+          const result = await processSingleVideo(scripts[i], videos[i], options, (progress, status) => {
+            const adjustedProgress = 5 + pairProgress + (progress / totalPairs * 0.9);
+            updateProgress(Math.round(adjustedProgress), `Pair ${i + 1}/${totalPairs}: ${status}`);
+          });
+          
+          results.push({
+            index: i,
+            scriptName: scripts[i].originalname,
+            videoName: videos[i].originalname,
+            ...result
+          });
+        } catch (error) {
+          console.error(`Error processing pair ${i + 1}:`, error);
+          results.push({
+            index: i,
+            scriptName: scripts[i].originalname,
+            videoName: videos[i].originalname,
+            success: false,
+            error: error.message
+          });
+        }
+      }
+      
+      updateProgress(100, 'Batch processing complete!');
+      
+      // Store batch results
+      global.processingResults[jobId] = {
+        success: true,
+        jobId: jobId,
+        batchMode: true,
+        totalPairs: totalPairs,
+        results: results,
+        successCount: results.filter(r => r.success).length,
+        failureCount: results.filter(r => !r.success).length
+      };
+      
+    } catch (error) {
+      console.error('Error in batch processing:', error);
+      global.processingResults[jobId] = {
+        success: false,
+        batchMode: true,
+        error: 'Batch processing failed',
+        details: error.message
+      };
+    }
+    
+    // Clean up progress tracking after delay
+    setTimeout(() => {
+      delete global.processingProgress[jobId];
+      delete global.processingResults[jobId];
+    }, 300000);
+  }
+
+  // Extract single video processing logic
+  async function processSingleVideo(scriptFile, videoFile, options, updateProgress) {
     let scriptPath = scriptFile.path;
     let videoPath = videoFile.path;
     let srtPath = null;
@@ -338,8 +435,6 @@ app.post('/api/caption', upload.fields([
         position: ['top', 'center', 'bottom'].includes(options.position) ? options.position : 'bottom'
       };
 
-      updateProgress(15, 'Parsing script...');
-
       // Read and parse script
       const scriptContent = fs.readFileSync(scriptPath, 'utf8');
       const subtitles = parseScript(scriptContent, processOptions);
@@ -350,31 +445,38 @@ app.post('/api/caption', upload.fields([
       
       updateProgress(20, 'Analyzing video...');
       
-      // Get video duration and dimensions
+      // Get video duration and dimensions using the fixed ffprobe logic
       const videoInfo = await new Promise((resolve, reject) => {
-        const ffprobeArgs = [
-          '-v', 'quiet',
-          '-print_format', 'json',
-          '-show_format',
-          '-show_streams',
-          '-i', videoPath
-        ];
-        const ffprobe = spawn(ffmpegPath, ffprobeArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+        let ffprobePath = 'ffprobe';
+        try {
+          const result = execSync('which ffprobe || where ffprobe', { encoding: 'utf8' });
+          if (result.trim()) {
+            ffprobePath = result.trim().split('\n')[0];
+          }
+        } catch (error) {
+          console.log('⚠️  FFprobe not found in system PATH.');
+        }
+        if (process.env.FFPROBE_PATH) {
+          ffprobePath = process.env.FFPROBE_PATH;
+        }
+        
+        const ffprobeArgs = ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', videoPath];
+        const ffprobe = spawn(ffprobePath, ffprobeArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
         
         let output = '';
-        ffprobe.stdout.on('data', (data) => {
-          output += data.toString();
-        });
+        let errorOutput = '';
+        
+        ffprobe.stdout.on('data', (data) => { output += data.toString(); });
+        ffprobe.stderr.on('data', (data) => { errorOutput += data.toString(); });
         
         ffprobe.on('close', (code) => {
           if (code !== 0) {
-            return reject(new Error('FFprobe failed to analyze video'));
+            return reject(new Error('FFprobe failed: ' + errorOutput));
           }
           
           try {
             const info = JSON.parse(output);
             const videoStream = info.streams.find(stream => stream.codec_type === 'video');
-            
             if (!videoStream) {
               return reject(new Error('No video stream found'));
             }
@@ -387,12 +489,9 @@ app.post('/api/caption', upload.fields([
               return reject(new Error('Could not extract video properties'));
             }
             
-            resolve({ 
-              format: { duration },
-              streams: [{ width, height }]
-            });
+            resolve({ format: { duration }, streams: [{ width, height }] });
           } catch (parseError) {
-            reject(new Error('Failed to parse video information: ' + parseError.message));
+            reject(new Error('Failed to parse video info: ' + parseError.message));
           }
         });
         
@@ -403,56 +502,63 @@ app.post('/api/caption', upload.fields([
       const videoWidth = videoInfo.streams[0].width;
       const videoHeight = videoInfo.streams[0].height;
       const subtitlesDuration = subtitles[subtitles.length - 1].end;
-      const totalDuration = Math.max(videoDuration, subtitlesDuration);
       
-      console.log(`Video: ${videoWidth}x${videoHeight}, Duration: ${videoDuration}s, Subtitles: ${subtitlesDuration}s, Total: ${totalDuration}s`);
+      // *** KEY CHANGE: Only process the overlapping duration ***
+      const processingDuration = Math.min(videoDuration, subtitlesDuration);
+      
+      console.log(`Video: ${videoWidth}x${videoHeight}, Duration: ${videoDuration}s, Subtitles: ${subtitlesDuration}s, Processing: ${processingDuration}s`);
       
       updateProgress(30, 'Generating subtitles...');
       
-      // Generate SRT file in subtitlesDir
-      const srtContent = generateSRT(subtitles);
+      // Filter subtitles to only include those within processing duration
+      const filteredSubtitles = subtitles.filter(sub => sub.start < processingDuration);
+      
+      // Adjust end times of subtitles that extend beyond processing duration
+      filteredSubtitles.forEach(sub => {
+        if (sub.end > processingDuration) {
+          sub.end = processingDuration;
+          sub.duration = sub.end - sub.start;
+        }
+      });
+      
+      // Generate SRT file
+      const srtContent = generateSRT(filteredSubtitles);
       srtPath = path.join(subtitlesDir, `script-${Date.now()}.srt`);
       fs.writeFileSync(srtPath, srtContent);
 
-      updateProgress(35, 'Creating preview...');
+      updateProgress(40, 'Creating preview...');
 
-      // Generate output filename in processedDir
+      // Generate output filename
       const outputFilename = `captioned-${Date.now()}.mp4`;
       const outputPath = path.join(processedDir, outputFilename);
       
-      // Ensure output directory exists
-      const outputDir = path.dirname(outputPath);
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
+      if (!fs.existsSync(path.dirname(outputPath))) {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
       }
 
-      updateProgress(40, 'Creating preview...');
-
-      // Generate preview GIF filename in tempDir
+      // Generate preview GIF
       const previewFilename = `preview-${Date.now()}.gif`;
       const previewPath = path.join(tempDir, previewFilename);
 
-      // Create preview GIF (first 3 seconds)
       await new Promise((resolve, reject) => {
         const palettePath = path.join(tempDir, `palette-${Date.now()}.png`);
+        const previewDuration = Math.min(3, processingDuration);
         
-        // First generate palette
-        const paletteArgs = ['-y', '-t', '3', '-i', videoPath, '-vf', 'fps=10,scale=320:-1:flags=lanczos,palettegen', palettePath];
+        const paletteArgs = ['-y', '-t', previewDuration.toString(), '-i', videoPath, '-vf', 'fps=10,scale=320:-1:flags=lanczos,palettegen', palettePath];
         const paletteProcess = spawn(ffmpegPath, paletteArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
         
         paletteProcess.on('close', (code) => {
           if (code !== 0) {
-            return reject(new Error('Failed to generate palette for preview'));
+            return reject(new Error('Failed to generate palette'));
           }
           
-          // Then create GIF using palette
-          const gifArgs = ['-y', '-t', '3', '-i', videoPath, '-i', palettePath, '-filter_complex', 'fps=10,scale=320:-1:flags=lanczos[x];[x][1:v]paletteuse', previewPath];
+          const gifArgs = ['-y', '-t', previewDuration.toString(), '-i', videoPath, '-i', palettePath, '-filter_complex', 'fps=10,scale=320:-1:flags=lanczos[x];[x][1:v]paletteuse', previewPath];
           const gifProcess = spawn(ffmpegPath, gifArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
           
           gifProcess.on('close', async (code) => {
             await safeDeleteFile(palettePath);
             if (code !== 0) {
-              return reject(new Error('Failed to create preview GIF'));
+              return reject(new Error('Failed to create preview'));
             }
             resolve();
           });
@@ -463,63 +569,33 @@ app.post('/api/caption', upload.fields([
         paletteProcess.on('error', reject);
       });
 
-      updateProgress(50, 'Creating preview...');
-      
       updateProgress(55, 'Processing video with captions...');
 
       // Build subtitle styling
       const bgrColor = hexToBGR(processOptions.fontColor);
       const alignment = getAlignment(processOptions.position);
       const boldValue = processOptions.fontWeight === 'bold' ? '1' : '0';
-      
-      // Escape the SRT path for FFmpeg
       const srtPathEscaped = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
-      
       const subtitleStyle = `FontName=Arial,FontSize=${processOptions.fontSize},PrimaryColour=${bgrColor},Bold=${boldValue},Alignment=${alignment}`;
 
-      // Process main video with captions using spawn for real-time progress
+      // Process video with captions - ONLY for the overlapping duration
       await new Promise((resolve, reject) => {
-        let ffmpegArgs;
+        const ffmpegArgs = [
+          '-y',
+          '-i', videoPath,
+          '-t', processingDuration.toString(), // *** KEY: Limit to overlapping duration ***
+          '-vf', `subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'`,
+          '-c:v', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-preset', 'medium',
+          '-crf', '23',
+          '-c:a', 'copy',
+          '-progress', 'pipe:2',
+          outputPath
+        ];
         
-        if (subtitlesDuration > videoDuration) {
-          // Add black padding with EXACT original video dimensions - apply subtitles FIRST, then concatenate
-          const paddingDuration = subtitlesDuration - videoDuration;
-          console.log(`Adding ${paddingDuration}s of black padding (${videoWidth}x${videoHeight}) to video`);
-          
-          // Apply subtitles to original video first, then concatenate with black padding using EXACT dimensions
-          const filterComplex = `[0:v]subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'[withSubtitles];color=black:size=${videoWidth}x${videoHeight}:duration=${paddingDuration}:rate=30[padding];[withSubtitles][padding]concat=n=2:v=1:a=0[final]`;
-          
-          ffmpegArgs = [
-            '-y',
-            '-i', videoPath,
-            '-filter_complex', filterComplex,
-            '-map', '[final]',
-            '-c:v', 'libx264',
-            '-pix_fmt', 'yuv420p',
-            '-preset', 'medium',
-            '-crf', '23',
-            '-progress', 'pipe:2',
-            outputPath
-          ];
-        } else {
-          // No padding needed - just add subtitles with NO scaling whatsoever
-          const videoFilter = `subtitles='${srtPathEscaped}':force_style='${subtitleStyle}'`;
-          
-          ffmpegArgs = [
-            '-y',
-            '-i', videoPath,
-            '-vf', videoFilter,
-            '-c:v', 'libx264',
-            '-pix_fmt', 'yuv420p',
-            '-preset', 'medium',
-            '-crf', '23',
-            '-c:a', 'copy',
-            '-progress', 'pipe:2',
-            outputPath
-          ];
-        }
-        
-        console.log('Running FFmpeg with args:', ffmpegArgs.join(' '));
+        console.log('Processing with overlap duration:', processingDuration, 'seconds');
+        console.log('FFmpeg args:', ffmpegArgs.join(' '));
         
         const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
         
@@ -529,13 +605,11 @@ app.post('/api/caption', upload.fields([
           const output = data.toString();
           stderrOutput += output;
           
-          // Parse progress from FFmpeg output
           const lines = output.split('\n');
           for (const line of lines) {
             const currentTime = parseFFmpegProgress(line);
             if (currentTime !== null) {
-              // Map FFmpeg progress to 55-95% range (40% of total progress)
-              const ffmpegProgress = Math.min(1, currentTime / totalDuration);
+              const ffmpegProgress = Math.min(1, currentTime / processingDuration);
               const progressPercent = Math.min(95, 55 + (ffmpegProgress * 40));
               updateProgress(Math.round(progressPercent), 'Processing video with captions...');
             }
@@ -548,9 +622,8 @@ app.post('/api/caption', upload.fields([
             return reject(new Error('Failed to process video: ' + stderrOutput));
           }
           
-          updateProgress(98, 'Cleaning up temporary files...');
+          updateProgress(98, 'Cleaning up...');
           
-          // Clean up temp files with safe deletion
           await Promise.all([
             safeDeleteFile(scriptPath),
             safeDeleteFile(videoPath),
@@ -560,59 +633,53 @@ app.post('/api/caption', upload.fields([
           resolve();
         });
         
-        ffmpegProcess.on('error', (err) => {
-          reject(new Error('FFmpeg process error: ' + err.message));
-        });
+        ffmpegProcess.on('error', reject);
       });
 
-      updateProgress(100, 'Processing complete!');
+      updateProgress(100, 'Complete!');
 
-      // Store final results
-      const result = {
+      return {
         success: true,
-        jobId: jobId,
-        duration: formatDuration(totalDuration),
-        durationSeconds: totalDuration,
-        subtitlesCount: subtitles.length,
+        duration: formatDuration(processingDuration),
+        durationSeconds: processingDuration,
+        subtitlesCount: filteredSubtitles.length,
         previewUrl: `/temp/${previewFilename}`,
         downloadUrl: `/download/${outputFilename}`,
-        subtitles: subtitles
+        subtitles: filteredSubtitles
       };
 
-      global.processingResults[jobId] = result;
-
-      // Clean up progress tracking after a delay
-      setTimeout(() => {
-        delete global.processingProgress[jobId];
-        delete global.processingResults[jobId];
-      }, 300000); // Clean up after 5 minutes
-
     } catch (error) {
-      console.error('Error processing video in background:', error);
+      console.error('Error processing single video:', error);
       
-      // Clean up temp files on error
       await Promise.all([
         safeDeleteFile(scriptPath),
         safeDeleteFile(videoPath),
         safeDeleteFile(srtPath)
       ]);
       
-      // Store error result
+      throw error;
+    }
+  }
+
+  // Background processing function
+  async function processVideoInBackground(jobId, scriptFile, videoFile, options, updateProgress) {
+    try {
+      const result = await processSingleVideo(scriptFile, videoFile, options, updateProgress);
+      global.processingResults[jobId] = result;
+    } catch (error) {
+      console.error('Error processing video in background:', error);
       global.processingResults[jobId] = {
         success: false,
-        error: 'Video processing failed. Please check your files and try again.',
+        error: 'Video processing failed',
         details: error.message
       };
-      
-      // Update progress to show error
-      updateProgress(0, 'Processing failed');
-      
-      // Clean up progress tracking
-      setTimeout(() => {
-        delete global.processingProgress[jobId];
-        delete global.processingResults[jobId];
-      }, 60000);
     }
+    
+    // Clean up progress tracking
+    setTimeout(() => {
+      delete global.processingProgress[jobId];
+      delete global.processingResults[jobId];
+    }, 300000);
   }
 });
 
