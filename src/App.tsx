@@ -35,6 +35,7 @@ function App() {
   const [scriptContent, setScriptContent] = useState<string>('');
   const [batchScripts, setBatchScripts] = useState<File[]>([]);
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [batchVideos, setBatchVideos] = useState<File[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('Starting...');
@@ -54,10 +55,14 @@ function App() {
   const handleFileUpload = useCallback((files: FileList, type: 'video') => {
     const file = files[0];
     if (type === 'video') {
-      setVideoFile(file);
+      if (processingMode === 'single') {
+        setVideoFile(file);
+      } else {
+        setBatchVideos(prev => [...prev, file]);
+      }
     }
     setError(null);
-  }, []);
+  }, [processingMode]);
 
   const handleBatchScriptUpload = useCallback((files: FileList) => {
     const scriptFiles = Array.from(files).filter(file => 
@@ -78,6 +83,7 @@ function App() {
       setBatchScripts([]);
     } else {
       setVideoFile(null);
+      setBatchVideos([]);
     }
     setError(null);
   }, []);
@@ -86,9 +92,13 @@ function App() {
     setBatchScripts(prev => prev.filter((_, i) => i !== index));
   }, []);
 
+  const handleRemoveBatchVideo = useCallback((index: number) => {
+    setBatchVideos(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
   const estimateRuntime = useCallback(() => {
     if (processingMode === 'single' && !scriptContent.trim()) return '00:00:00';
-    if (processingMode === 'batch' && batchScripts.length === 0) return '00:00:00';
+    if (processingMode === 'batch' && (batchScripts.length === 0 || batchVideos.length === 0)) return '00:00:00';
     
     let estimatedLines = 0;
     
@@ -97,7 +107,7 @@ function App() {
       estimatedLines = lines.length || 1;
     } else {
       // For batch, estimate based on average script length
-      estimatedLines = batchScripts.length * 10; // Assume 10 lines per script on average
+      estimatedLines = Math.min(batchScripts.length, batchVideos.length) * 10; // Process pairs only
     }
     
     const totalSeconds = estimatedLines * (options.baseDuration + (5 * options.wordDuration));
@@ -107,7 +117,7 @@ function App() {
     const seconds = Math.floor(totalSeconds % 60);
     
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-  }, [scriptContent, batchScripts, processingMode, options]);
+  }, [scriptContent, batchScripts, batchVideos, processingMode, options]);
 
   const handleProcess = async () => {
     if (processingMode === 'single' && (!scriptContent.trim() || !videoFile)) {
@@ -115,8 +125,13 @@ function App() {
       return;
     }
     
-    if (processingMode === 'batch' && (batchScripts.length === 0 || !videoFile)) {
-      setError('Please upload script files and a video file for batch processing');
+    if (processingMode === 'batch' && (batchScripts.length === 0 || batchVideos.length === 0)) {
+      setError('Please upload script files and video files for batch processing');
+      return;
+    }
+    
+    if (processingMode === 'batch' && batchScripts.length !== batchVideos.length) {
+      setError(`Number of script files (${batchScripts.length}) must match number of video files (${batchVideos.length})`);
       return;
     }
 
@@ -130,10 +145,22 @@ function App() {
     try {
       const formData = new FormData();
       
-      // Create a blob from script content and append as file
-      const scriptBlob = new Blob([scriptContent], { type: 'text/plain' });
-      formData.append('script', scriptBlob, 'script.txt');
-      formData.append('video', videoFile);
+      if (processingMode === 'single') {
+        // Create a blob from script content and append as file
+        const scriptBlob = new Blob([scriptContent], { type: 'text/plain' });
+        formData.append('script', scriptBlob, 'script.txt');
+        formData.append('video', videoFile);
+      } else {
+        // Batch processing - append all files
+        batchScripts.forEach((script, index) => {
+          formData.append(`script_${index}`, script);
+        });
+        batchVideos.forEach((video, index) => {
+          formData.append(`video_${index}`, video);
+        });
+        formData.append('processingMode', 'batch');
+        formData.append('batchCount', batchScripts.length.toString());
+      }
       
       Object.entries(options).forEach(([key, value]) => {
         formData.append(key, value.toString());
@@ -234,11 +261,11 @@ function App() {
 
   const canProceedToCustomize = processingMode === 'single' 
     ? (scriptContent.trim() && videoFile)
-    : (batchScripts.length > 0 && videoFile);
+    : (batchScripts.length > 0 && batchVideos.length > 0 && batchScripts.length === batchVideos.length);
     
   const canProcess = processingMode === 'single'
     ? (scriptContent.trim() && videoFile)
-    : (batchScripts.length > 0 && videoFile);
+    : (batchScripts.length > 0 && batchVideos.length > 0 && batchScripts.length === batchVideos.length);
 
   const stepIndicators = [
     { key: 'upload', label: 'Upload', icon: Upload },
@@ -557,26 +584,145 @@ function App() {
                     )}
                     
                     {/* Video Upload Section */}
-                    <div className="relative h-80 sm:h-96">
-                      <DragDropZone
-                        onFileUpload={(files) => handleFileUpload(files, 'video')}
-                        acceptedTypes=".mp4,.MP4,.mov,.MOV,.avi,.AVI,.mkv,.MKV,.webm,.WEBM,.flv,.FLV,.wmv,.WMV,.m4v,.M4V,.3gp,.3GP,video/*"
-                        icon={Video}
-                        title="Video File"
-                        description="Upload your video file (MP4, MOV, AVI, etc.)"
-                        file={videoFile}
-                        onFileDeselect={() => handleFileDeselect('video')}
-                      />
-                    </div>
+                    {processingMode === 'single' ? (
+                      <div className="relative h-80 sm:h-96">
+                        <DragDropZone
+                          onFileUpload={(files) => handleFileUpload(files, 'video')}
+                          acceptedTypes=".mp4,.MP4,.mov,.MOV,.avi,.AVI,.mkv,.MKV,.webm,.WEBM,.flv,.FLV,.wmv,.WMV,.m4v,.M4V,.3gp,.3GP,video/*"
+                          icon={Video}
+                          title="Video File"
+                          description="Upload your video file (MP4, MOV, AVI, etc.)"
+                          file={videoFile}
+                          onFileDeselect={() => handleFileDeselect('video')}
+                        />
+                      </div>
+                    ) : (
+                      <div className="relative h-80 sm:h-96">
+                        <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-4 sm:p-6 border border-white/20 hover:border-purple-400 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/20 h-full flex flex-col">
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center">
+                              <div className="p-2 sm:p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl mr-3">
+                                <Video className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
+                              </div>
+                              <div>
+                                <h3 className="text-base sm:text-lg lg:text-xl font-bold text-white">Video Files</h3>
+                                <p className="text-purple-200 text-xs sm:text-sm">Upload video files (same count as scripts)</p>
+                              </div>
+                            </div>
+                            {batchVideos.length > 0 && (
+                              <button
+                                onClick={() => handleFileDeselect('video')}
+                                className="p-1.5 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all duration-300 hover:scale-110"
+                                title="Clear all videos"
+                              >
+                                <X className="w-3 h-3 sm:w-4 sm:h-4 text-red-300" />
+                              </button>
+                            )}
+                          </div>
+                          
+                          {batchVideos.length === 0 ? (
+                            <div className="flex-1 flex flex-col justify-center">
+                              <div
+                                className="border-2 border-dashed border-white/30 rounded-xl p-4 sm:p-6 text-center hover:border-purple-400 hover:bg-purple-500/10 transition-all duration-300 cursor-pointer"
+                                onDragOver={(e) => e.preventDefault()}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  handleFileUpload(e.dataTransfer.files, 'video');
+                                }}
+                              >
+                                <input
+                                  type="file"
+                                  multiple
+                                  accept=".mp4,.MP4,.mov,.MOV,.avi,.AVI,.mkv,.MKV,.webm,.WEBM,.flv,.FLV,.wmv,.WMV,.m4v,.M4V,.3gp,.3GP,video/*"
+                                  onChange={(e) => e.target.files && handleFileUpload(e.target.files, 'video')}
+                                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                />
+                                <div className="space-y-2">
+                                  <div className="w-12 h-12 bg-gradient-to-r from-purple-500/50 to-pink-500/50 rounded-xl mx-auto flex items-center justify-center">
+                                    <Video className="w-6 h-6 text-white" />
+                                  </div>
+                                  <p className="text-white font-medium">Drop video files here</p>
+                                  <p className="text-purple-200 text-sm">or click to browse</p>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                              <div className="space-y-2">
+                                {batchVideos.map((file, index) => (
+                                  <div
+                                    key={index}
+                                    className="flex items-center justify-between p-2 sm:p-3 bg-white/10 rounded-lg border border-white/20 hover:border-purple-400 transition-all duration-300"
+                                  >
+                                    <div className="flex items-center space-x-2 flex-1 min-w-0">
+                                      <Video className="w-4 h-4 text-purple-300 flex-shrink-0" />
+                                      <span className="text-white text-sm truncate">{file.name}</span>
+                                      <span className="text-purple-300 text-xs">
+                                        ({(file.size / (1024 * 1024)).toFixed(1)}MB)
+                                      </span>
+                                    </div>
+                                    <button
+                                      onClick={() => handleRemoveBatchVideo(index)}
+                                      className="p-1 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all duration-300 hover:scale-110 flex-shrink-0"
+                                      title="Remove file"
+                                    >
+                                      <X className="w-3 h-3 text-red-300" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="mt-3 text-center">
+                                <div
+                                  className="border border-dashed border-white/30 rounded-lg p-2 hover:border-purple-400 hover:bg-purple-500/10 transition-all duration-300 cursor-pointer"
+                                  onDragOver={(e) => e.preventDefault()}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    handleFileUpload(e.dataTransfer.files, 'video');
+                                  }}
+                                >
+                                  <input
+                                    type="file"
+                                    multiple
+                                    accept=".mp4,.MP4,.mov,.MOV,.avi,.AVI,.mkv,.MKV,.webm,.WEBM,.flv,.FLV,.wmv,.WMV,.m4v,.M4V,.3gp,.3GP,video/*"
+                                    onChange={(e) => e.target.files && handleFileUpload(e.target.files, 'video')}
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                  />
+                                  <p className="text-purple-200 text-xs">+ Add more files</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          
+                          {batchVideos.length > 0 && (
+                            <div className="flex justify-between items-center mt-2 pt-2 border-t border-white/10">
+                              <span className="text-xs text-purple-300">
+                                {batchVideos.length} files selected
+                              </span>
+                              <span className="text-xs text-purple-300">
+                                {(batchVideos.reduce((acc, file) => acc + file.size, 0) / (1024 * 1024)).toFixed(1)}MB total
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {((processingMode === 'single' && scriptContent.trim()) || (processingMode === 'batch' && batchScripts.length > 0)) && (
                     <div className="mb-6 sm:mb-8 p-4 sm:p-6 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-2xl border border-purple-300/30">
+                      {processingMode === 'batch' && batchScripts.length !== batchVideos.length && (
+                        <div className="mb-4 p-3 bg-red-500/20 border border-red-300/30 rounded-xl">
+                          <p className="text-red-200 text-sm font-medium">
+                            ⚠️ File count mismatch: {batchScripts.length} scripts vs {batchVideos.length} videos. 
+                            Please ensure equal numbers for batch processing.
+                          </p>
+                        </div>
+                      )}
                       <div className="flex items-center text-white">
                         <Clock className="w-5 h-5 sm:w-6 sm:h-6 mr-3 text-purple-300" />
                         <span className="text-sm sm:text-base lg:text-lg font-medium">
                           Estimated Runtime: {estimateRuntime()}
-                          {processingMode === 'batch' && ` (${batchScripts.length} videos)`}
+                          {processingMode === 'batch' && ` (${Math.min(batchScripts.length, batchVideos.length)} video pairs)`}
                         </span>
                       </div>
                     </div>
