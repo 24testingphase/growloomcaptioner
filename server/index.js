@@ -14,101 +14,6 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ===== GPU DETECTION AND CONFIGURATION =====
-let gpuConfig = {
-  available: false,
-  type: 'cpu',
-  encoder: 'libx264',
-  hwaccel: null,
-  preset: 'medium'
-};
-
-// Function to detect GPU capabilities
-async function detectGPUCapabilities() {
-  console.log('🔍 Detecting GPU capabilities...');
-  
-  const gpuTests = [
-    {
-      name: 'NVIDIA NVENC',
-      type: 'nvidia',
-      encoder: 'h264_nvenc',
-      hwaccel: 'cuda',
-      preset: 'fast',
-      testArgs: ['-f', 'lavfi', '-i', 'testsrc2=duration=1:size=320x240:rate=1', '-c:v', 'h264_nvenc', '-preset', 'fast', '-f', 'null', '-']
-    },
-    {
-      name: 'Intel Quick Sync',
-      type: 'intel',
-      encoder: 'h264_qsv',
-      hwaccel: 'qsv',
-      preset: 'fast',
-      testArgs: ['-f', 'lavfi', '-i', 'testsrc2=duration=1:size=320x240:rate=1', '-c:v', 'h264_qsv', '-preset', 'fast', '-f', 'null', '-']
-    },
-    {
-      name: 'AMD AMF',
-      type: 'amd',
-      encoder: 'h264_amf',
-      hwaccel: null,
-      preset: 'speed',
-      testArgs: ['-f', 'lavfi', '-i', 'testsrc2=duration=1:size=320x240:rate=1', '-c:v', 'h264_amf', '-quality', 'speed', '-f', 'null', '-']
-    }
-  ];
-
-  for (const gpu of gpuTests) {
-    try {
-      console.log(`   Testing ${gpu.name}...`);
-      await new Promise((resolve, reject) => {
-        const testProcess = spawn(ffmpegPath, gpu.testArgs, { 
-          stdio: ['pipe', 'pipe', 'pipe'],
-          timeout: 10000 // 10 second timeout
-        });
-        
-        let stderr = '';
-        testProcess.stderr.on('data', (data) => {
-          stderr += data.toString();
-        });
-        
-        testProcess.on('close', (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`${gpu.name} test failed: ${stderr}`));
-          }
-        });
-        
-        testProcess.on('error', reject);
-        
-        // Timeout fallback
-        setTimeout(() => {
-          testProcess.kill();
-          reject(new Error(`${gpu.name} test timeout`));
-        }, 10000);
-      });
-      
-      // If we get here, the GPU encoder works
-      gpuConfig = {
-        available: true,
-        type: gpu.type,
-        encoder: gpu.encoder,
-        hwaccel: gpu.hwaccel,
-        preset: gpu.preset,
-        name: gpu.name
-      };
-      
-      console.log(`✅ GPU acceleration available: ${gpu.name}`);
-      console.log(`   Encoder: ${gpu.encoder}`);
-      console.log(`   Hardware acceleration: ${gpu.hwaccel || 'N/A'}`);
-      return; // Use the first working GPU
-      
-    } catch (error) {
-      console.log(`   ❌ ${gpu.name} not available: ${error.message.split('\n')[0]}`);
-    }
-  }
-  
-  console.log('⚠️  No GPU acceleration available, using CPU encoding');
-  console.log('   Encoder: libx264 (CPU)');
-}
-
 // ===== LOCAL FFMPEG DETECTION =====
 // This application ONLY uses your local FFmpeg installation
 // No browser-based or cloud FFmpeg packages are used
@@ -138,12 +43,6 @@ if (process.env.FFMPEG_PATH) {
 try {
   execSync(`"${ffmpegPath}" -version`, { encoding: 'utf8', stdio: 'pipe' });
   console.log(`🎬 FFmpeg is ready for video processing`);
-  
-  // Detect GPU capabilities after FFmpeg is verified
-  detectGPUCapabilities().catch(error => {
-    console.error('Error detecting GPU capabilities:', error.message);
-    console.log('⚠️  Falling back to CPU encoding');
-  });
 } catch (error) {
   console.error(`❌ FFmpeg not accessible at: ${ffmpegPath}`);
   console.error('Please check your FFmpeg installation or set FFMPEG_PATH environment variable');
@@ -453,10 +352,6 @@ app.post('/api/caption', upload.fields([
       
       // Get video duration and dimensions
       const videoInfo = await new Promise((resolve, reject) => {
-        
-        console.log(`🔍 Attempting to use FFprobe at: ${ffprobePath}`);
-        console.log(`📹 Analyzing video file: ${videoPath}`);
-        
         const ffprobeArgs = [
           '-v', 'quiet',
           '-print_format', 'json',
@@ -464,9 +359,6 @@ app.post('/api/caption', upload.fields([
           '-show_streams',
           '-i', videoPath
         ];
-        
-        console.log(`🎬 FFprobe command: ${ffprobePath} ${ffprobeArgs.join(' ')}`);
-        
         const ffprobe = spawn(ffmpegPath, ffprobeArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
         
         let output = '';
@@ -585,61 +477,9 @@ app.post('/api/caption', upload.fields([
       
       const subtitleStyle = `FontName=Arial,FontSize=${processOptions.fontSize},PrimaryColour=${bgrColor},Bold=${boldValue},Alignment=${alignment}`;
 
-      // Build encoding arguments based on GPU availability
-      const getEncodingArgs = () => {
-        const baseArgs = [
-          '-c:v', gpuConfig.encoder,
-          '-pix_fmt', 'yuv420p'
-        ];
-        
-        if (gpuConfig.available) {
-          console.log(`🚀 Using GPU acceleration: ${gpuConfig.name}`);
-          
-          // Add hardware acceleration if available
-          const hwaccelArgs = gpuConfig.hwaccel ? ['-hwaccel', gpuConfig.hwaccel] : [];
-          
-          // GPU-specific encoding settings
-          switch (gpuConfig.type) {
-            case 'nvidia':
-              return [
-                ...hwaccelArgs,
-                ...baseArgs,
-                '-preset', gpuConfig.preset,
-                '-rc', 'vbr',
-                '-cq', '23',
-                '-b:v', '0'
-              ];
-            case 'intel':
-              return [
-                ...hwaccelArgs,
-                ...baseArgs,
-                '-preset', gpuConfig.preset,
-                '-global_quality', '23'
-              ];
-            case 'amd':
-              return [
-                ...baseArgs,
-                '-quality', gpuConfig.preset,
-                '-rc', 'cqp',
-                '-qp_i', '23',
-                '-qp_p', '23'
-              ];
-            default:
-              return [...baseArgs, '-crf', '23'];
-          }
-        } else {
-          console.log('🔧 Using CPU encoding: libx264');
-          return [
-            ...baseArgs,
-            '-preset', 'medium',
-            '-crf', '23'
-          ];
-        }
-      };
       // Process main video with captions using spawn for real-time progress
       await new Promise((resolve, reject) => {
         let ffmpegArgs;
-        const encodingArgs = getEncodingArgs();
         
         if (subtitlesDuration > videoDuration) {
           // Add black padding with EXACT original video dimensions - apply subtitles FIRST, then concatenate
@@ -651,12 +491,14 @@ app.post('/api/caption', upload.fields([
           
           ffmpegArgs = [
             '-y',
-            ...(gpuConfig.hwaccel ? ['-hwaccel', gpuConfig.hwaccel] : []),
             '-i', videoPath,
             '-filter_complex', filterComplex,
             '-map', '[final]',
             '-c:v', 'libx264',
-            ...encodingArgs,
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'medium',
+            '-crf', '23',
+            '-progress', 'pipe:2',
             outputPath
           ];
         } else {
@@ -665,18 +507,19 @@ app.post('/api/caption', upload.fields([
           
           ffmpegArgs = [
             '-y',
-            ...(gpuConfig.hwaccel ? ['-hwaccel', gpuConfig.hwaccel] : []),
             '-i', videoPath,
             '-vf', videoFilter,
-            ...encodingArgs,
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'medium',
+            '-crf', '23',
             '-c:a', 'copy',
             '-progress', 'pipe:2',
             outputPath
           ];
         }
         
-        console.log(`🎬 Processing with ${gpuConfig.available ? gpuConfig.name : 'CPU'} encoding`);
-        console.log('FFmpeg command:', ffmpegArgs.join(' '));
+        console.log('Running FFmpeg with args:', ffmpegArgs.join(' '));
         
         const ffmpegProcess = spawn(ffmpegPath, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
         
@@ -778,13 +621,7 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    ffmpegPath: ffmpegPath,
-    gpu: {
-      available: gpuConfig.available,
-      type: gpuConfig.type,
-      encoder: gpuConfig.encoder,
-      name: gpuConfig.name || 'CPU (libx264)'
-    }
+    ffmpegPath: ffmpegPath
   });
 });
 
@@ -816,7 +653,6 @@ app.use('/temp', express.static(tempDir));
 app.listen(PORT, () => {
   console.log(`🚀 Growloom Captioner server running on port ${PORT}`);
   console.log(`🔧 Using FFmpeg at: ${ffmpegPath}`);
-  console.log(`⚡ Encoding: ${gpuConfig.available ? `${gpuConfig.name} (${gpuConfig.encoder})` : 'CPU (libx264)'}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
   console.log(`📁 File structure: uploads/ | subtitles/ | temp/ | processed/`);
   console.log(`🎬 Ready to process videos with captions!`);
