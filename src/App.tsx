@@ -27,9 +27,13 @@ interface ProcessingResult {
 
 type Step = 'upload' | 'customize' | 'processing' | 'results';
 
+type ProcessingMode = 'single' | 'batch';
+
 function App() {
   const [currentStep, setCurrentStep] = useState<Step>('upload');
+  const [processingMode, setProcessingMode] = useState<ProcessingMode>('single');
   const [scriptContent, setScriptContent] = useState<string>('');
+  const [batchScripts, setBatchScripts] = useState<File[]>([]);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -55,6 +59,14 @@ function App() {
     setError(null);
   }, []);
 
+  const handleBatchScriptUpload = useCallback((files: FileList) => {
+    const scriptFiles = Array.from(files).filter(file => 
+      file.type === 'text/plain' || file.name.endsWith('.txt')
+    );
+    setBatchScripts(prev => [...prev, ...scriptFiles]);
+    setError(null);
+  }, []);
+
   const handleScriptChange = useCallback((content: string) => {
     setScriptContent(content);
     setError(null);
@@ -63,17 +75,31 @@ function App() {
   const handleFileDeselect = useCallback((type: 'script' | 'video') => {
     if (type === 'script') {
       setScriptContent('');
+      setBatchScripts([]);
     } else {
       setVideoFile(null);
     }
     setError(null);
   }, []);
 
+  const handleRemoveBatchScript = useCallback((index: number) => {
+    setBatchScripts(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
   const estimateRuntime = useCallback(() => {
-    if (!scriptContent.trim()) return '00:00:00';
+    if (processingMode === 'single' && !scriptContent.trim()) return '00:00:00';
+    if (processingMode === 'batch' && batchScripts.length === 0) return '00:00:00';
     
-    const lines = scriptContent.split('\n').filter(line => line.trim());
-    const estimatedLines = lines.length || 1;
+    let estimatedLines = 0;
+    
+    if (processingMode === 'single') {
+      const lines = scriptContent.split('\n').filter(line => line.trim());
+      estimatedLines = lines.length || 1;
+    } else {
+      // For batch, estimate based on average script length
+      estimatedLines = batchScripts.length * 10; // Assume 10 lines per script on average
+    }
+    
     const totalSeconds = estimatedLines * (options.baseDuration + (5 * options.wordDuration));
     
     const hours = Math.floor(totalSeconds / 3600);
@@ -81,11 +107,16 @@ function App() {
     const seconds = Math.floor(totalSeconds % 60);
     
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-  }, [scriptContent, options]);
+  }, [scriptContent, batchScripts, processingMode, options]);
 
   const handleProcess = async () => {
-    if (!scriptContent.trim() || !videoFile) {
+    if (processingMode === 'single' && (!scriptContent.trim() || !videoFile)) {
       setError('Please provide both script content and upload a video file');
+      return;
+    }
+    
+    if (processingMode === 'batch' && (batchScripts.length === 0 || !videoFile)) {
+      setError('Please upload script files and a video file for batch processing');
       return;
     }
 
@@ -191,6 +222,7 @@ function App() {
 
   const handleReset = () => {
     setScriptContent('');
+    setBatchScripts([]);
     setVideoFile(null);
     setResult(null);
     setError(null);
@@ -200,8 +232,13 @@ function App() {
     setCurrentStep('upload');
   };
 
-  const canProceedToCustomize = scriptContent.trim() && videoFile;
-  const canProcess = scriptContent.trim() && videoFile;
+  const canProceedToCustomize = processingMode === 'single' 
+    ? (scriptContent.trim() && videoFile)
+    : (batchScripts.length > 0 && videoFile);
+    
+  const canProcess = processingMode === 'single'
+    ? (scriptContent.trim() && videoFile)
+    : (batchScripts.length > 0 && videoFile);
 
   const stepIndicators = [
     { key: 'upload', label: 'Upload', icon: Upload },
@@ -276,6 +313,61 @@ function App() {
           </div>
         </div>
 
+        {/* Processing Mode Toggle */}
+        <div className="flex justify-center mb-6 sm:mb-8 px-4">
+          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-2 border border-white/20 shadow-xl">
+            <div className="flex items-center space-x-1">
+              <button
+                onClick={() => {
+                  setProcessingMode('single');
+                  setBatchScripts([]);
+                  setScriptContent('');
+                  setError(null);
+                }}
+                className={`relative px-4 sm:px-6 lg:px-8 py-2 sm:py-3 rounded-xl font-semibold transition-all duration-500 text-sm sm:text-base ${
+                  processingMode === 'single'
+                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg transform scale-105'
+                    : 'text-purple-200 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <div className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                    processingMode === 'single' ? 'bg-white' : 'bg-purple-300'
+                  }`} />
+                  <span>Single Video</span>
+                </div>
+                {processingMode === 'single' && (
+                  <div className="absolute inset-0 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-xl animate-pulse" />
+                )}
+              </button>
+              
+              <button
+                onClick={() => {
+                  setProcessingMode('batch');
+                  setScriptContent('');
+                  setBatchScripts([]);
+                  setError(null);
+                }}
+                className={`relative px-4 sm:px-6 lg:px-8 py-2 sm:py-3 rounded-xl font-semibold transition-all duration-500 text-sm sm:text-base ${
+                  processingMode === 'batch'
+                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg transform scale-105'
+                    : 'text-purple-200 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <div className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                    processingMode === 'batch' ? 'bg-white' : 'bg-purple-300'
+                  }`} />
+                  <span>Batch Processing</span>
+                </div>
+                {processingMode === 'batch' && (
+                  <div className="absolute inset-0 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-xl animate-pulse" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Main Content */}
         <div className="flex-1 flex items-start justify-center px-4 pb-8">
           <div className="w-full max-w-6xl">
@@ -299,52 +391,170 @@ function App() {
               <div className="transform transition-all duration-700 ease-out">
                 <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-4 sm:p-6 lg:p-8 border border-white/20 shadow-2xl">
                   <div className="text-center mb-6 sm:mb-8">
-                    <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white mb-2">Upload Your Files</h2>
-                    <p className="text-purple-200 text-sm sm:text-base">Start by writing your script and uploading your video file</p>
+                    <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white mb-2">
+                      {processingMode === 'single' ? 'Upload Your Files' : 'Upload Batch Files'}
+                    </h2>
+                    <p className="text-purple-200 text-sm sm:text-base">
+                      {processingMode === 'single' 
+                        ? 'Start by writing your script and uploading your video file'
+                        : 'Upload multiple script files and one video file for batch processing'
+                      }
+                    </p>
                   </div>
                   
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 mb-6 sm:mb-8">
-                    {/* Script Content Section */}
-                    <div className="relative h-80 sm:h-96">
-                      <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-4 sm:p-6 border border-white/20 hover:border-purple-400 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/20 h-full flex flex-col">
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center">
-                            <div className="p-2 sm:p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl mr-3">
-                              <FileText className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
+                    {/* Script Section - Single or Batch */}
+                    {processingMode === 'single' ? (
+                      <div className="relative h-80 sm:h-96">
+                        <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-4 sm:p-6 border border-white/20 hover:border-purple-400 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/20 h-full flex flex-col">
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center">
+                              <div className="p-2 sm:p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl mr-3">
+                                <FileText className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
+                              </div>
+                              <div>
+                                <h3 className="text-base sm:text-lg lg:text-xl font-bold text-white">Script Content</h3>
+                                <p className="text-purple-200 text-xs sm:text-sm">Write or paste your script here</p>
+                              </div>
                             </div>
-                            <div>
-                              <h3 className="text-base sm:text-lg lg:text-xl font-bold text-white">Script Content</h3>
-                              <p className="text-purple-200 text-xs sm:text-sm">Write or paste your script here</p>
-                            </div>
+                            {scriptContent.trim() && (
+                              <button
+                                onClick={() => handleFileDeselect('script')}
+                                className="p-1.5 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all duration-300 hover:scale-110"
+                                title="Clear script"
+                              >
+                                <X className="w-3 h-3 sm:w-4 sm:h-4 text-red-300" />
+                              </button>
+                            )}
                           </div>
-                          {scriptContent.trim() && (
-                            <button
-                              onClick={() => handleFileDeselect('script')}
-                              className="p-1.5 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all duration-300 hover:scale-110"
-                              title="Clear script"
-                            >
-                              <X className="w-3 h-3 sm:w-4 sm:h-4 text-red-300" />
-                            </button>
-                          )}
-                        </div>
-                        <div className="flex-1 flex flex-col">
-                          <textarea
-                            value={scriptContent}
-                            onChange={(e) => handleScriptChange(e.target.value)}
-                            placeholder="Enter your script here... Each line will become a subtitle."
-                            className="w-full flex-1 px-3 sm:px-4 py-2 sm:py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300 resize-none text-sm sm:text-base"
-                          />
-                          <div className="flex justify-between items-center mt-2">
-                            <span className="text-xs text-purple-300">
-                              {scriptContent.split('\n').filter(line => line.trim()).length} lines
-                            </span>
-                            <span className="text-xs text-purple-300">
-                              {scriptContent.length} characters
-                            </span>
+                          <div className="flex-1 flex flex-col">
+                            <textarea
+                              value={scriptContent}
+                              onChange={(e) => handleScriptChange(e.target.value)}
+                              placeholder="Enter your script here... Each line will become a subtitle."
+                              className="w-full flex-1 px-3 sm:px-4 py-2 sm:py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300 resize-none text-sm sm:text-base"
+                            />
+                            <div className="flex justify-between items-center mt-2">
+                              <span className="text-xs text-purple-300">
+                                {scriptContent.split('\n').filter(line => line.trim()).length} lines
+                              </span>
+                              <span className="text-xs text-purple-300">
+                                {scriptContent.length} characters
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="relative h-80 sm:h-96">
+                        <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-4 sm:p-6 border border-white/20 hover:border-purple-400 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/20 h-full flex flex-col">
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center">
+                              <div className="p-2 sm:p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl mr-3">
+                                <FileText className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
+                              </div>
+                              <div>
+                                <h3 className="text-base sm:text-lg lg:text-xl font-bold text-white">Script Files</h3>
+                                <p className="text-purple-200 text-xs sm:text-sm">Upload multiple .txt script files</p>
+                              </div>
+                            </div>
+                            {batchScripts.length > 0 && (
+                              <button
+                                onClick={() => handleFileDeselect('script')}
+                                className="p-1.5 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all duration-300 hover:scale-110"
+                                title="Clear all scripts"
+                              >
+                                <X className="w-3 h-3 sm:w-4 sm:h-4 text-red-300" />
+                              </button>
+                            )}
+                          </div>
+                          
+                          {batchScripts.length === 0 ? (
+                            <div className="flex-1 flex flex-col justify-center">
+                              <div
+                                className="border-2 border-dashed border-white/30 rounded-xl p-4 sm:p-6 text-center hover:border-purple-400 hover:bg-purple-500/10 transition-all duration-300 cursor-pointer"
+                                onDragOver={(e) => e.preventDefault()}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  handleBatchScriptUpload(e.dataTransfer.files);
+                                }}
+                              >
+                                <input
+                                  type="file"
+                                  multiple
+                                  accept=".txt,text/plain"
+                                  onChange={(e) => e.target.files && handleBatchScriptUpload(e.target.files)}
+                                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                />
+                                <div className="space-y-2">
+                                  <div className="w-12 h-12 bg-gradient-to-r from-purple-500/50 to-pink-500/50 rounded-xl mx-auto flex items-center justify-center">
+                                    <FileText className="w-6 h-6 text-white" />
+                                  </div>
+                                  <p className="text-white font-medium">Drop .txt files here</p>
+                                  <p className="text-purple-200 text-sm">or click to browse</p>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                              <div className="space-y-2">
+                                {batchScripts.map((file, index) => (
+                                  <div
+                                    key={index}
+                                    className="flex items-center justify-between p-2 sm:p-3 bg-white/10 rounded-lg border border-white/20 hover:border-purple-400 transition-all duration-300"
+                                  >
+                                    <div className="flex items-center space-x-2 flex-1 min-w-0">
+                                      <FileText className="w-4 h-4 text-purple-300 flex-shrink-0" />
+                                      <span className="text-white text-sm truncate">{file.name}</span>
+                                      <span className="text-purple-300 text-xs">
+                                        ({(file.size / 1024).toFixed(1)}KB)
+                                      </span>
+                                    </div>
+                                    <button
+                                      onClick={() => handleRemoveBatchScript(index)}
+                                      className="p-1 bg-red-500/20 hover:bg-red-500/40 rounded-full transition-all duration-300 hover:scale-110 flex-shrink-0"
+                                      title="Remove file"
+                                    >
+                                      <X className="w-3 h-3 text-red-300" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="mt-3 text-center">
+                                <div
+                                  className="border border-dashed border-white/30 rounded-lg p-2 hover:border-purple-400 hover:bg-purple-500/10 transition-all duration-300 cursor-pointer"
+                                  onDragOver={(e) => e.preventDefault()}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    handleBatchScriptUpload(e.dataTransfer.files);
+                                  }}
+                                >
+                                  <input
+                                    type="file"
+                                    multiple
+                                    accept=".txt,text/plain"
+                                    onChange={(e) => e.target.files && handleBatchScriptUpload(e.target.files)}
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                  />
+                                  <p className="text-purple-200 text-xs">+ Add more files</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          
+                          {batchScripts.length > 0 && (
+                            <div className="flex justify-between items-center mt-2 pt-2 border-t border-white/10">
+                              <span className="text-xs text-purple-300">
+                                {batchScripts.length} files selected
+                              </span>
+                              <span className="text-xs text-purple-300">
+                                {(batchScripts.reduce((acc, file) => acc + file.size, 0) / 1024).toFixed(1)}KB total
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     
                     {/* Video Upload Section */}
                     <div className="relative h-80 sm:h-96">
@@ -360,11 +570,14 @@ function App() {
                     </div>
                   </div>
 
-                  {scriptContent.trim() && (
+                  {((processingMode === 'single' && scriptContent.trim()) || (processingMode === 'batch' && batchScripts.length > 0)) && (
                     <div className="mb-6 sm:mb-8 p-4 sm:p-6 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-2xl border border-purple-300/30">
                       <div className="flex items-center text-white">
                         <Clock className="w-5 h-5 sm:w-6 sm:h-6 mr-3 text-purple-300" />
-                        <span className="text-sm sm:text-base lg:text-lg font-medium">Estimated Runtime: {estimateRuntime()}</span>
+                        <span className="text-sm sm:text-base lg:text-lg font-medium">
+                          Estimated Runtime: {estimateRuntime()}
+                          {processingMode === 'batch' && ` (${batchScripts.length} videos)`}
+                        </span>
                       </div>
                     </div>
                   )}
