@@ -453,6 +453,10 @@ app.post('/api/caption', upload.fields([
       
       // Get video duration and dimensions
       const videoInfo = await new Promise((resolve, reject) => {
+        
+        console.log(`🔍 Attempting to use FFprobe at: ${ffprobePath}`);
+        console.log(`📹 Analyzing video file: ${videoPath}`);
+        
         const ffprobeArgs = [
           '-v', 'quiet',
           '-print_format', 'json',
@@ -460,6 +464,9 @@ app.post('/api/caption', upload.fields([
           '-show_streams',
           '-i', videoPath
         ];
+        
+        console.log(`🎬 FFprobe command: ${ffprobePath} ${ffprobeArgs.join(' ')}`);
+        
         const ffprobe = spawn(ffmpegPath, ffprobeArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
         
         let output = '';
