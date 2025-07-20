@@ -25,6 +25,28 @@ interface ProcessingResult {
   subtitles: any[];
 }
 
+interface BatchProcessingResult {
+  success: boolean;
+  jobId: string;
+  batchMode: true;
+  totalPairs: number;
+  results: Array<{
+    index: number;
+    scriptName: string;
+    videoName: string;
+    success: boolean;
+    duration?: string;
+    durationSeconds?: number;
+    subtitlesCount?: number;
+    previewUrl?: string;
+    downloadUrl?: string;
+    subtitles?: any[];
+    error?: string;
+  }>;
+  successCount: number;
+  failureCount: number;
+}
+
 type Step = 'upload' | 'customize' | 'processing' | 'results';
 
 type ProcessingMode = 'single' | 'batch';
@@ -39,7 +61,7 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('Starting...');
-  const [result, setResult] = useState<ProcessingResult | null>(null);
+  const [result, setResult] = useState<ProcessingResult | BatchProcessingResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   const [options, setOptions] = useState<CaptionOptions>({
@@ -53,12 +75,17 @@ function App() {
   });
 
   const handleFileUpload = useCallback((files: FileList, type: 'video') => {
-    const file = files[0];
     if (type === 'video') {
       if (processingMode === 'single') {
+        const file = files[0];
         setVideoFile(file);
       } else {
-        setBatchVideos(prev => [...prev, file]);
+        // Handle multiple video files in batch mode
+        const videoFiles = Array.from(files).filter(file => 
+          file.type.startsWith('video/') || 
+          file.name.match(/\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp)$/i)
+        );
+        setBatchVideos(prev => [...prev, ...videoFiles]);
       }
     }
     setError(null);
@@ -805,7 +832,7 @@ function App() {
             )}
 
             {/* Results Step */}
-            {currentStep === 'results' && result && (
+            {currentStep === 'results' && result && !('batchMode' in result) && (
               <div className="transform transition-all duration-700 ease-out">
                 <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-4 sm:p-6 lg:p-8 border border-white/20 shadow-2xl">
                   <div className="text-center mb-6 sm:mb-8">
@@ -813,7 +840,7 @@ function App() {
                     <p className="text-purple-200 text-sm sm:text-base">Preview your captioned video and download when ready</p>
                   </div>
                   
-                  <ResultsDisplay result={result} />
+                  <ResultsDisplay result={result as ProcessingResult} />
 
                   <div className="flex justify-center mt-6 sm:mt-8">
                     <button
@@ -822,6 +849,126 @@ function App() {
                     >
                       <Upload className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
                       <span>Create Another Video</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Batch Results Step */}
+            {currentStep === 'results' && result && 'batchMode' in result && (
+              <div className="transform transition-all duration-700 ease-out">
+                <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-4 sm:p-6 lg:p-8 border border-white/20 shadow-2xl">
+                  <div className="text-center mb-6 sm:mb-8">
+                    <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white mb-2">Batch Processing Complete!</h2>
+                    <p className="text-purple-200 text-sm sm:text-base">
+                      {(result as BatchProcessingResult).successCount} of {(result as BatchProcessingResult).totalPairs} videos processed successfully
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-4 sm:space-y-6">
+                    {/* Batch Summary */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-gradient-to-br from-green-500/20 to-emerald-500/20 border border-green-300/30 rounded-2xl p-4">
+                        <div className="text-center">
+                          <div className="text-2xl sm:text-3xl font-bold text-green-300 mb-1">
+                            {(result as BatchProcessingResult).successCount}
+                          </div>
+                          <div className="text-green-200 text-sm">Successful</div>
+                        </div>
+                      </div>
+                      <div className="bg-gradient-to-br from-red-500/20 to-pink-500/20 border border-red-300/30 rounded-2xl p-4">
+                        <div className="text-center">
+                          <div className="text-2xl sm:text-3xl font-bold text-red-300 mb-1">
+                            {(result as BatchProcessingResult).failureCount}
+                          </div>
+                          <div className="text-red-200 text-sm">Failed</div>
+                        </div>
+                      </div>
+                      <div className="bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-purple-300/30 rounded-2xl p-4">
+                        <div className="text-center">
+                          <div className="text-2xl sm:text-3xl font-bold text-purple-300 mb-1">
+                            {(result as BatchProcessingResult).totalPairs}
+                          </div>
+                          <div className="text-purple-200 text-sm">Total Videos</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Individual Results */}
+                    <div className="space-y-3 sm:space-y-4 max-h-96 overflow-y-auto custom-scrollbar">
+                      {(result as BatchProcessingResult).results.map((videoResult, index) => (
+                        <div
+                          key={index}
+                          className={`p-4 sm:p-6 rounded-2xl border transition-all duration-300 ${
+                            videoResult.success
+                              ? 'bg-green-500/10 border-green-300/30 hover:bg-green-500/20'
+                              : 'bg-red-500/10 border-red-300/30 hover:bg-red-500/20'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-3 mb-2">
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                                  videoResult.success ? 'bg-green-500' : 'bg-red-500'
+                                }`}>
+                                  <span className="text-white font-bold text-sm">{index + 1}</span>
+                                </div>
+                                <div>
+                                  <h3 className="text-white font-semibold text-sm sm:text-base truncate">
+                                    {videoResult.scriptName} + {videoResult.videoName}
+                                  </h3>
+                                  {videoResult.success ? (
+                                    <p className="text-green-200 text-xs sm:text-sm">
+                                      {videoResult.duration} • {videoResult.subtitlesCount} subtitles
+                                    </p>
+                                  ) : (
+                                    <p className="text-red-200 text-xs sm:text-sm">
+                                      {videoResult.error || 'Processing failed'}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {videoResult.success && videoResult.downloadUrl && (
+                              <div className="flex space-x-2">
+                                {videoResult.previewUrl && (
+                                  <button
+                                    onClick={() => window.open(`http://localhost:3001${videoResult.previewUrl}`, '_blank')}
+                                    className="px-3 py-2 bg-purple-500/20 hover:bg-purple-500/40 text-purple-200 rounded-xl transition-all duration-300 text-xs sm:text-sm"
+                                  >
+                                    Preview
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    const link = document.createElement('a');
+                                    link.href = `http://localhost:3001${videoResult.downloadUrl}`;
+                                    link.download = '';
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                  }}
+                                  className="px-3 py-2 bg-green-500/20 hover:bg-green-500/40 text-green-200 rounded-xl transition-all duration-300 text-xs sm:text-sm"
+                                >
+                                  Download
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-center mt-6 sm:mt-8">
+                    <button
+                      onClick={handleReset}
+                      className="group bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold py-3 sm:py-4 px-6 sm:px-8 rounded-2xl hover:from-purple-700 hover:to-pink-700 transition-all duration-300 flex items-center shadow-2xl hover:shadow-purple-500/25 hover:scale-105 text-sm sm:text-base"
+                    >
+                      <Upload className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
+                      <span>Process More Videos</span>
                     </button>
                   </div>
                 </div>
