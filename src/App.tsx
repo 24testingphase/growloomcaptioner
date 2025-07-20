@@ -831,6 +831,20 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* Footer */}
+      <footer className="mt-12 py-6 sm:py-8 border-t border-white/10">
+        <div className="text-center">
+          <p className="text-purple-200 text-sm sm:text-base font-medium">
+            © Growloom 2025. All rights reserved.
+          </p>
+          <div className="mt-2 flex items-center justify-center space-x-2">
+            <div className="w-2 h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full animate-pulse"></div>
+            <span className="text-purple-300 text-xs sm:text-sm">Powered by AI-driven video captioning</span>
+            <div className="w-2 h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full animate-pulse"></div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
